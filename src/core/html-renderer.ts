@@ -75,6 +75,9 @@ export class HtmlRenderer {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claude Receipt - ${data.transcriptData.sessionSlug}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;700&display=block">
   <style>
     * {
       margin: 0;
@@ -83,8 +86,10 @@ export class HtmlRenderer {
     }
 
     body {
-      font-family: 'Courier New', Courier, monospace;
+      font-family: 'Geist Mono', ui-monospace, 'Courier New', Courier, monospace;
       font-size: 16px;
+      font-variant-ligatures: none;
+      font-feature-settings: "liga" 0, "calt" 0, "dlig" 0;
       background: #3a3a3a;
       min-height: 100vh;
       display: flex;
