@@ -37,7 +37,7 @@
     "cli"
   ],
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=20.0.0"
   },
   "dependencies": {
     "boxen": "^8.0.1",
