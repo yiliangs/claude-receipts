@@ -136,10 +136,11 @@ export class GenerateCommand {
       const renderedHtml = needsHtml
         ? this.htmlRenderer.generateHtml(receiptData, receipt)
         : "";
-      const fileBase =
+      const slug =
         transcriptData.sessionSlug ||
         actualSessionId ||
         sessionData.sessionId;
+      const fileBase = `${slug}-${this.formatTimestamp(transcriptData.endTime)}`;
 
       for (const format of outputFormats) {
         try {
@@ -264,11 +265,24 @@ export class GenerateCommand {
   }
 
   /**
-   * Build the standard output path: ~/.claude-receipts/projects/<slug>.<ext>
+   * Build the standard output path: ~/.claude-receipts/projects/<slug>-<ts>.<ext>
    */
   private outputPathFor(fileBase: string, ext: string): string {
     const home = process.env.HOME || process.env.USERPROFILE || "";
     return `${home}/.claude-receipts/projects/${fileBase}.${ext}`;
+  }
+
+  /**
+   * Compact local-time stamp keyed off the session's end. Two regenerations
+   * of the same session land on the same filename (idempotent); different
+   * sessions with colliding slugs get distinct files.
+   */
+  private formatTimestamp(d: Date): string {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return (
+      `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+      `-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+    );
   }
 
   /**
