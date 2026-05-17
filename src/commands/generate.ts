@@ -8,6 +8,7 @@ import { DataFetcher } from "../core/data-fetcher.js";
 import { TranscriptParser } from "../core/transcript-parser.js";
 import { ReceiptGenerator } from "../core/receipt-generator.js";
 import { HtmlRenderer } from "../core/html-renderer.js";
+import { ImageRenderer } from "../core/image-renderer.js";
 import { ThermalPrinterRenderer } from "../core/thermal-printer.js";
 import { ConfigManager } from "../core/config-manager.js";
 import { LocationDetector } from "../utils/location.js";
@@ -16,7 +17,7 @@ import type { ReceiptData } from "../core/receipt-generator.js";
 
 const execAsync = promisify(exec);
 
-export type OutputFormat = "html" | "console" | "printer";
+export type OutputFormat = "html" | "console" | "printer" | "png" | "pdf";
 
 export interface GenerateOptions {
   session?: string;
@@ -30,6 +31,7 @@ export class GenerateCommand {
   private transcriptParser = new TranscriptParser();
   private receiptGenerator = new ReceiptGenerator();
   private htmlRenderer = new HtmlRenderer();
+  private imageRenderer = new ImageRenderer();
   private thermalPrinter = new ThermalPrinterRenderer();
   private configManager = new ConfigManager();
   private locationDetector = new LocationDetector();
@@ -127,6 +129,18 @@ export class GenerateCommand {
 
       const errors: Array<{ format: OutputFormat; error: Error }> = [];
 
+      // Render HTML once if any format needs it (html, png, pdf)
+      const needsHtml = outputFormats.some((f) =>
+        f === "html" || f === "png" || f === "pdf",
+      );
+      const renderedHtml = needsHtml
+        ? this.htmlRenderer.generateHtml(receiptData, receipt)
+        : "";
+      const fileBase =
+        transcriptData.sessionSlug ||
+        actualSessionId ||
+        sessionData.sessionId;
+
       for (const format of outputFormats) {
         try {
           switch (format) {
@@ -134,13 +148,13 @@ export class GenerateCommand {
               await this.outputToPrinter(receiptData, options, config, spinner);
               break;
             case "html":
-              await this.outputToHtml(
-                receiptData,
-                receipt,
-                actualSessionId || sessionData.sessionId,
-                transcriptData.sessionSlug,
-                isFromHook,
-              );
+              await this.outputToHtml(renderedHtml, fileBase, isFromHook);
+              break;
+            case "png":
+              await this.outputToImage(renderedHtml, fileBase, "png");
+              break;
+            case "pdf":
+              await this.outputToImage(renderedHtml, fileBase, "pdf");
               break;
             case "console":
               this.outputToConsole(receipt);
@@ -158,6 +172,15 @@ export class GenerateCommand {
               ),
             );
           }
+        }
+      }
+
+      // Always close the puppeteer browser if it was used
+      if (outputFormats.includes("png") || outputFormats.includes("pdf")) {
+        try {
+          await this.imageRenderer.close();
+        } catch {
+          // ignore cleanup errors
         }
       }
 
@@ -203,18 +226,11 @@ export class GenerateCommand {
    * Save receipt as HTML and optionally open in browser
    */
   private async outputToHtml(
-    receiptData: ReceiptData,
-    receipt: string,
-    sessionId: string,
-    sessionSlug: string | undefined,
+    html: string,
+    fileBase: string,
     isFromHook: boolean,
   ): Promise<void> {
-    const fileName = sessionSlug || sessionId;
-    const home = process.env.HOME || process.env.USERPROFILE || "";
-    const outputDir = `${home}/.claude-receipts/projects`;
-    const fullPath = `${outputDir}/${fileName}.html`;
-
-    const html = this.htmlRenderer.generateHtml(receiptData, receipt);
+    const fullPath = this.outputPathFor(fileBase, "html");
     await this.saveHtmlFile(html, fullPath);
 
     if (isFromHook) {
@@ -222,6 +238,37 @@ export class GenerateCommand {
     } else {
       console.log(chalk.cyan("\nTip: Open in browser to view!"));
     }
+  }
+
+  /**
+   * Render receipt to PNG or PDF via headless Chromium and save to disk.
+   */
+  private async outputToImage(
+    html: string,
+    fileBase: string,
+    kind: "png" | "pdf",
+  ): Promise<void> {
+    const { mkdir } = await import("fs/promises");
+    const { dirname, resolve } = await import("path");
+
+    const fullPath = resolve(this.expandPath(this.outputPathFor(fileBase, kind)));
+    await mkdir(dirname(fullPath), { recursive: true });
+
+    if (kind === "png") {
+      await this.imageRenderer.renderPng(html, fullPath);
+    } else {
+      await this.imageRenderer.renderPdf(html, fullPath);
+    }
+
+    console.log(chalk.green(`Receipt saved to: ${fullPath}`));
+  }
+
+  /**
+   * Build the standard output path: ~/.claude-receipts/projects/<slug>.<ext>
+   */
+  private outputPathFor(fileBase: string, ext: string): string {
+    const home = process.env.HOME || process.env.USERPROFILE || "";
+    return `${home}/.claude-receipts/projects/${fileBase}.${ext}`;
   }
 
   /**

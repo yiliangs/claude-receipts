@@ -70,6 +70,8 @@ export class SetupCommand {
         message: "Output formats for the SessionEnd hook:",
         choices: [
           { title: "HTML (opens in browser)", value: "html", selected: true },
+          { title: "PNG image", value: "png", selected: true },
+          { title: "PDF", value: "pdf", selected: true },
           { title: "Thermal printer", value: "printer" },
         ],
         hint: "- Space to select, Enter to confirm",
@@ -116,6 +118,16 @@ export class SetupCommand {
       if (outputs.includes("html")) {
         tips.push(
           "HTML receipts will open in your browser when you exit Claude Code sessions",
+        );
+      }
+      if (outputs.includes("png")) {
+        tips.push(
+          "PNG images will be saved to ~/.claude-receipts/projects/<slug>.png",
+        );
+      }
+      if (outputs.includes("pdf")) {
+        tips.push(
+          "PDFs will be saved to ~/.claude-receipts/projects/<slug>.pdf",
         );
       }
       if (outputs.includes("printer")) {
