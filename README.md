@@ -22,7 +22,7 @@
 
 ## HTML receipt
 
-![A screenshot of an example receipt](screenshot.jpeg)
+![A screenshot of an example receipt](screenshot.png)
 
 </details>
 
