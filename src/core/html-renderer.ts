@@ -1,4 +1,5 @@
 import type { ReceiptData } from "./receipt-generator.js";
+import type { WeatherSnapshot } from "../utils/weather.js";
 import {
   formatCurrency,
   formatNumber,
@@ -293,6 +294,31 @@ export class HtmlRenderer {
       border-top: 1px dashed #999;
     }
 
+    .weather {
+      margin-top: 20px;
+      padding-top: 20px;
+      border-top: 1px dashed #999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      color: #333;
+    }
+
+    .weather-icon {
+      font-size: 36px;
+      line-height: 1;
+    }
+
+    .weather-text {
+      font-size: 14px;
+    }
+
+    .weather-place {
+      font-size: 12px;
+      color: #777;
+    }
+
     .share-section {
       display: flex;
       flex-direction: column;
@@ -414,11 +440,9 @@ export class HtmlRenderer {
 </div>
         <div class="meta">
           <div class="meta-row">
-            <div>Location</div><div class="dots">....................</div><div class="value">${this.escapeHtml(data.location)}</div>
-          </div>
-          <div class="meta-row">
             <div>Session</div><div class="dots">....................</div><div class="value">${this.escapeHtml(data.transcriptData.sessionSlug)}</div>
           </div>
+          ${this.renderProjectRow(data)}
           <div class="meta-row">
             <div>Date</div><div class="dots">....................</div><div class="value">${formatDateTime(data.transcriptData.endTime, data.config.timezone)}</div>
           </div>
@@ -439,10 +463,7 @@ export class HtmlRenderer {
       <div class="footer">
         <div>CASHIER: ${this.getMainModel(data)}</div>
         <div class="footer-message">Thank you for building!</div>
-        <div class="generated-by">
-          Print your own <strong>Claude receipts</strong> with<br>
-          <a href="https://github.com/chrishutchinson/claude-receipts" style="color: #333;">github.com/chrishutchinson/claude-receipts</a>
-        </div>
+        ${this.renderWeather(data)}
       </div>
     </div>
 
@@ -574,6 +595,36 @@ ${JSON.stringify(shareableData, null, 2)}
   </script>
 </body>
 </html>`;
+  }
+
+  /** Project/branch row for the header meta block. Hidden when neither is known. */
+  private renderProjectRow(data: ReceiptData): string {
+    const { projectName, gitBranch } = data.transcriptData;
+    if (!projectName && !gitBranch) return "";
+
+    const value =
+      projectName && gitBranch
+        ? `${projectName} @ ${gitBranch}`
+        : projectName || gitBranch || "";
+
+    return `<div class="meta-row">
+            <div>Project</div><div class="dots">....................</div><div class="value">${this.escapeHtml(value)}</div>
+          </div>`;
+  }
+
+  /** Weather footer block. Hidden when the fetch failed. */
+  private renderWeather(data: ReceiptData): string {
+    const w: WeatherSnapshot | null | undefined = data.weather;
+    if (!w) return "";
+    const temp = `${Math.round(w.tempC)}°C`;
+    const place = w.place
+      ? `<div class="weather-place">${this.escapeHtml(w.place)}</div>`
+      : "";
+    return `<div class="weather">
+          <div class="weather-icon">${this.escapeHtml(w.icon)}</div>
+          <div class="weather-text">${this.escapeHtml(w.description)} · ${temp}</div>
+          ${place}
+        </div>`;
   }
 
   /**

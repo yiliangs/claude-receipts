@@ -1,6 +1,7 @@
 import type { CcusageSession } from "../types/ccusage.js";
 import type { ParsedTranscript } from "../types/transcript.js";
 import type { ReceiptConfig } from "../types/config.js";
+import type { WeatherSnapshot } from "../utils/weather.js";
 import {
   formatCurrency,
   formatNumber,
@@ -14,6 +15,7 @@ export interface ReceiptData {
   transcriptData: ParsedTranscript;
   location: string;
   config: ReceiptConfig;
+  weather?: WeatherSnapshot | null;
 }
 
 export class ReceiptGenerator {
@@ -29,11 +31,14 @@ export class ReceiptGenerator {
     lines.push(SEPARATOR);
     lines.push("");
 
-    // Location and session info
-    lines.push(this.centerText(`Location: ${data.location}`, 35));
+    // Session info (location now lives in the weather footer)
     lines.push(
       this.centerText(`Session: ${data.transcriptData.sessionSlug}`, 35),
     );
+    const projectLine = this.projectLine(data.transcriptData);
+    if (projectLine) {
+      lines.push(this.centerText(projectLine, 35));
+    }
     lines.push(
       this.centerText(
         formatDateTime(data.transcriptData.endTime, data.config.timezone),
@@ -133,7 +138,29 @@ export class ReceiptGenerator {
     lines.push("");
     lines.push(SEPARATOR);
 
+    const weatherLine = this.weatherLine(data.weather);
+    if (weatherLine) {
+      lines.push(this.centerText(weatherLine, 35));
+      lines.push(SEPARATOR);
+    }
+
     return lines.join("\n");
+  }
+
+  /** "<project> @ <branch>" — drops the @ branch portion if branch is missing. */
+  private projectLine(t: ParsedTranscript): string | null {
+    if (!t.projectName && !t.gitBranch) return null;
+    if (t.projectName && t.gitBranch) {
+      return `${t.projectName} @ ${t.gitBranch}`;
+    }
+    return t.projectName || t.gitBranch || null;
+  }
+
+  /** "<icon> <description>, <temp>°C" — null when no weather snapshot. */
+  private weatherLine(w?: WeatherSnapshot | null): string | null {
+    if (!w) return null;
+    const temp = `${Math.round(w.tempC)}°C`;
+    return `${w.icon}  ${w.description}, ${temp}`;
   }
 
   /**

@@ -7,9 +7,16 @@ import type {
 
 export class TranscriptParser {
   /**
-   * Parse a transcript JSONL file
+   * Parse a transcript JSONL file.
+   *
+   * @param fallbackId Used for the slug when the transcript has no slug field
+   *   (new transcript format leaves `slug: null` on user messages). First 8
+   *   chars are taken — keeps filenames short but unique enough to disambiguate.
    */
-  async parseTranscript(transcriptPath: string): Promise<ParsedTranscript> {
+  async parseTranscript(
+    transcriptPath: string,
+    fallbackId?: string,
+  ): Promise<ParsedTranscript> {
     // Expand ~ to home directory
     const expandedPath = transcriptPath.replace(/^~/, process.env.HOME || "");
 
@@ -30,7 +37,10 @@ export class TranscriptParser {
 
     const firstUserMessage = userMessages[0];
     const firstPrompt = this.extractPromptText(firstUserMessage);
-    const sessionSlug = firstUserMessage?.slug || "unknown-session";
+    const sessionSlug =
+      firstUserMessage?.slug ||
+      (fallbackId ? fallbackId.slice(0, 8) : null) ||
+      "unknown-session";
 
     // Calculate duration
     const timestamps = messages
@@ -40,6 +50,15 @@ export class TranscriptParser {
     const startTime = timestamps[0] || new Date();
     const endTime = timestamps[timestamps.length - 1] || new Date();
 
+    // Prefer the most recent cwd / gitBranch — branches change mid-session
+    // (checkout, new branch), and only the last value reflects where the
+    // work actually landed.
+    const lastCwd = [...messages].reverse().find((m) => m.cwd)?.cwd;
+    const lastBranch = [...messages]
+      .reverse()
+      .find((m) => m.gitBranch)?.gitBranch;
+    const projectName = lastCwd ? this.basename(lastCwd) : undefined;
+
     return {
       sessionSlug,
       firstPrompt,
@@ -48,7 +67,17 @@ export class TranscriptParser {
       userMessageCount: userMessages.length,
       assistantMessageCount: assistantMessages.length,
       totalMessages: messages.length,
+      projectName,
+      gitBranch: lastBranch,
+      cwd: lastCwd,
     };
+  }
+
+  /** Last path segment of a cwd, tolerant of either slash style. */
+  private basename(path: string): string {
+    const trimmed = path.replace(/[\\/]+$/, "");
+    const idx = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+    return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
   }
 
   /**

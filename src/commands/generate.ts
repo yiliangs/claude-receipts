@@ -14,6 +14,7 @@ import { ImageRenderer } from "../core/image-renderer.js";
 import { ThermalPrinterRenderer } from "../core/thermal-printer.js";
 import { ConfigManager } from "../core/config-manager.js";
 import { LocationDetector } from "../utils/location.js";
+import { WeatherFetcher } from "../utils/weather.js";
 import type { SessionEndHookData } from "../types/session-hook.js";
 import type { ReceiptData } from "../core/receipt-generator.js";
 import type { CcusageSession } from "../types/ccusage.js";
@@ -38,6 +39,7 @@ export class GenerateCommand {
   private thermalPrinter = new ThermalPrinterRenderer();
   private configManager = new ConfigManager();
   private locationDetector = new LocationDetector();
+  private weatherFetcher = new WeatherFetcher();
 
   async execute(options: GenerateOptions): Promise<void> {
     const spinner = ora("Generating receipt...").start();
@@ -117,12 +119,35 @@ export class GenerateCommand {
 
       // Parse transcript
       spinner.text = "Parsing transcript...";
-      const transcriptData =
-        await this.transcriptParser.parseTranscript(transcriptPath);
+      const transcriptData = await this.transcriptParser.parseTranscript(
+        transcriptPath,
+        actualSessionId,
+      );
 
-      // Get location
-      const location =
-        options.location || (await this.locationDetector.getLocation(config));
+      // Transcripts sometimes record gitBranch as the literal "HEAD"
+      // (detached state at capture, or stale value). Resolve to the
+      // current branch from the recorded cwd when that happens.
+      const resolvedCwd = stdinData?.cwd || transcriptData.cwd;
+      if (
+        resolvedCwd &&
+        (!transcriptData.gitBranch || transcriptData.gitBranch === "HEAD")
+      ) {
+        const live = await this.resolveCurrentBranch(resolvedCwd);
+        if (live) transcriptData.gitBranch = live;
+      }
+
+      // Get location + weather in parallel. Weather is best-effort —
+      // null result just hides the footer block.
+      spinner.text = "Resolving location and weather...";
+      const [location, weather] = await Promise.all([
+        options.location
+          ? Promise.resolve(options.location)
+          : this.locationDetector.getLocation(config),
+        this.weatherFetcher.getCurrentWeather(),
+      ]);
+      this.logHookEvent(
+        `weather ${weather ? `${weather.description} ${Math.round(weather.tempC)}C` : "unavailable"}`,
+      );
 
       // Generate receipt data
       spinner.text = "Generating receipt...";
@@ -131,6 +156,7 @@ export class GenerateCommand {
         transcriptData,
         location,
         config,
+        weather,
       };
 
       const receipt = this.receiptGenerator.generateReceipt(receiptData);
@@ -242,6 +268,24 @@ export class GenerateCommand {
       );
     } catch {
       // log failures are not worth crashing the hook for
+    }
+  }
+
+  /**
+   * Ask git for the current branch in a working directory. Returns null on
+   * any failure (not a repo, git missing, detached HEAD with no symbolic
+   * ref). Used to repair the transcript's "HEAD" gitBranch.
+   */
+  private async resolveCurrentBranch(cwd: string): Promise<string | null> {
+    try {
+      const { stdout } = await execAsync(
+        `git -C "${cwd}" branch --show-current`,
+        { timeout: 1500 },
+      );
+      const branch = stdout.trim();
+      return branch || null;
+    } catch {
+      return null;
     }
   }
 
