@@ -243,8 +243,8 @@ export class ImageRenderer {
 
   /**
    * Shared overrides: kill the slideIn animation (otherwise --print-to-pdf
-   * captures opacity:0), drop the dark page background, hide share UI, and
-   * suppress the ::before/::after notched edges that overflow the receipt box.
+   * captures opacity:0), drop the dark page background, and suppress the
+   * ::before/::after notched edges that overflow the receipt box.
    */
   private commonCss(): string {
     return `
@@ -253,7 +253,6 @@ export class ImageRenderer {
       html, body { background: #ffffff !important; }
       .receipt-container { padding: 0 !important; gap: 0 !important; box-shadow: none !important; }
       .receipt { margin: 0 !important; box-shadow: none !important; opacity: 1 !important; transform: none !important; }
-      .share-section, #share-btn, #share-result { display: none !important; }
     `;
   }
 

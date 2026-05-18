@@ -3,15 +3,18 @@
   "version": "1.1.0",
   "description": "Bring receipts from your Claude Code sessions",
   "license": "MIT",
-  "author": "Chris Hutchinson <github.com/chrishutchinson>",
+  "author": "Yiliang Shao <github.com/yiliangs>",
+  "contributors": [
+    "Chris Hutchinson <github.com/chrishutchinson> (original author)"
+  ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/chrishutchinson/claude-receipts.git"
+    "url": "https://github.com/yiliangs/claude-receipts.git"
   },
   "bugs": {
-    "url": "https://github.com/chrishutchinson/claude-receipts/issues"
+    "url": "https://github.com/yiliangs/claude-receipts/issues"
   },
-  "homepage": "https://github.com/chrishutchinson/claude-receipts#readme",
+  "homepage": "https://github.com/yiliangs/claude-receipts#readme",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
