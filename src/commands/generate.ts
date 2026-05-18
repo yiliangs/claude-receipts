@@ -1,10 +1,12 @@
 import { stdin } from "process";
+import { mkdirSync, appendFileSync } from "fs";
+import { join } from "path";
 import chalk from "chalk";
 import boxen from "boxen";
 import ora from "ora";
 import { exec } from "child_process";
 import { promisify } from "util";
-import { DataFetcher } from "../core/data-fetcher.js";
+import { DataFetcher, SessionNotIndexedError } from "../core/data-fetcher.js";
 import { TranscriptParser } from "../core/transcript-parser.js";
 import { ReceiptGenerator } from "../core/receipt-generator.js";
 import { HtmlRenderer } from "../core/html-renderer.js";
@@ -14,6 +16,7 @@ import { ConfigManager } from "../core/config-manager.js";
 import { LocationDetector } from "../utils/location.js";
 import type { SessionEndHookData } from "../types/session-hook.js";
 import type { ReceiptData } from "../core/receipt-generator.js";
+import type { CcusageSession } from "../types/ccusage.js";
 
 const execAsync = promisify(exec);
 
@@ -38,6 +41,7 @@ export class GenerateCommand {
 
   async execute(options: GenerateOptions): Promise<void> {
     const spinner = ora("Generating receipt...").start();
+    this.logHookEvent(`invoke pid=${process.pid} cwd=${process.cwd()}`);
 
     try {
       // Check if stdin has data (called from hook)
@@ -49,6 +53,9 @@ export class GenerateCommand {
         // Called from SessionEnd hook - use the transcript path directly!
         transcriptPath = stdinData.transcript_path;
         actualSessionId = stdinData.session_id;
+        this.logHookEvent(`stdin session=${actualSessionId} transcript=${transcriptPath}`);
+      } else {
+        this.logHookEvent(`stdin none (TTY=${stdin.isTTY ?? "?"}) — manual mode`);
       }
 
       // Load config
@@ -62,21 +69,30 @@ export class GenerateCommand {
         if (actualSessionId) {
           // From hook or when we have the full UUID — fetch directly by ID
           // for accurate totals (avoids sub-session slice issue with --breakdown)
-          sessionData =
-            await this.dataFetcher.fetchSessionById(actualSessionId);
+          sessionData = await this.fetchSessionWithRetry(actualSessionId);
         } else {
           // Manual mode — discover session by prefix/name, then fetch accurate data
           sessionData =
             await this.dataFetcher.fetchSessionData(options.session);
         }
+        this.logHookEvent(`ccusage ok cost=${sessionData.totalCost} tokens=${sessionData.totalTokens}`);
       } catch (err) {
-        if (stdinData) {
-          // Session not found in ccusage — likely too short or not yet processed.
-          // Exit silently rather than generating a receipt for the wrong session.
+        const firstMsg = err instanceof Error ? err.message : String(err);
+
+        if (stdinData && actualSessionId) {
+          // ccusage exhausted retries — synthesize an empty-cost receipt
+          // rather than vanishing silently. Sessions with no API calls
+          // legitimately have no ccusage data.
+          this.logHookEvent(`ccusage gave up: ${firstMsg} — synthesizing empty session`);
+          sessionData = this.makeEmptySessionData(actualSessionId);
+        } else if (stdinData) {
+          // Hook mode but no session ID — can't recover; bail with a log.
+          this.logHookEvent(`hook mode but no session_id — giving up: ${firstMsg}`);
           spinner.stop();
           return;
+        } else {
+          throw err;
         }
-        throw err;
       }
 
       // Determine transcript path if not from hook
@@ -161,10 +177,12 @@ export class GenerateCommand {
               this.outputToConsole(receipt);
               break;
           }
+          this.logHookEvent(`output ok: ${format} (${fileBase})`);
         } catch (err) {
           const error =
             err instanceof Error ? err : new Error("Unknown error");
           errors.push({ format, error });
+          this.logHookEvent(`output fail: ${format}: ${error.message}`);
 
           if (outputFormats.length > 1 && !isFromHook) {
             console.log(
@@ -189,8 +207,11 @@ export class GenerateCommand {
         // All outputs failed — throw the first error
         throw errors[0].error;
       }
+      this.logHookEvent(`done formats=${outputFormats.join(",")}`);
     } catch (error) {
       spinner.fail("Failed to generate receipt");
+      const msg = error instanceof Error ? error.message : "unknown error";
+      this.logHookEvent(`fatal: ${msg}`);
 
       if (error instanceof Error) {
         console.error(chalk.red(`Error: ${error.message}`));
@@ -200,6 +221,95 @@ export class GenerateCommand {
 
       process.exit(1);
     }
+  }
+
+  /**
+   * Append a one-line event to ~/.claude-receipts/hook.log. Fails silently
+   * so logging never breaks the hook. The log is the only window into hook
+   * behavior — SessionEnd has no console.
+   */
+  private logHookEvent(message: string): void {
+    try {
+      const home = process.env.HOME || process.env.USERPROFILE || "";
+      if (!home) return;
+      const dir = join(home, ".claude-receipts");
+      mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString();
+      appendFileSync(
+        join(dir, "hook.log"),
+        `[${stamp}] ${message}\n`,
+        "utf-8",
+      );
+    } catch {
+      // log failures are not worth crashing the hook for
+    }
+  }
+
+  /**
+   * Call ccusage with exponential backoff when the session hasn't been
+   * indexed yet. ccusage's indexer can take 10–20s to catch up on a
+   * just-ended session; the previous 1.5s single retry was producing
+   * spurious $0.00 receipts for real sessions. SessionEnd runs in
+   * background, so the extra wait is invisible to the user.
+   */
+  private async fetchSessionWithRetry(
+    sessionId: string,
+  ): Promise<CcusageSession> {
+    const delays = [0, 3000, 8000, 15000]; // ~26s total budget
+    let lastErr: unknown;
+
+    for (let i = 0; i < delays.length; i++) {
+      if (delays[i] > 0) {
+        await new Promise((r) => setTimeout(r, delays[i]));
+      }
+      try {
+        const data = await this.dataFetcher.fetchSessionById(sessionId);
+        if (i > 0) {
+          this.logHookEvent(
+            `ccusage ok on attempt ${i + 1} (waited ${delays
+              .slice(0, i + 1)
+              .reduce((a, b) => a + b, 0)}ms)`,
+          );
+        }
+        return data;
+      } catch (err) {
+        lastErr = err;
+        const isNotIndexed = err instanceof SessionNotIndexedError;
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logHookEvent(
+          `ccusage attempt ${i + 1} failed: ${msg}` +
+            (i < delays.length - 1
+              ? ` — retrying in ${delays[i + 1]}ms`
+              : " — out of retries"),
+        );
+        // Non-recoverable errors (e.g., ccusage missing) don't get retried.
+        if (!isNotIndexed) break;
+      }
+    }
+
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error(String(lastErr));
+  }
+
+  /**
+   * Synthesize a zero-cost CcusageSession when ccusage has no data for the
+   * session yet (very short sessions / index lag). The receipt is still
+   * worth rendering — it captures location, duration, and prompts — even
+   * if the cost section reads $0.00.
+   */
+  private makeEmptySessionData(sessionId: string): CcusageSession {
+    return {
+      sessionId,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      totalTokens: 0,
+      totalCost: 0,
+      modelsUsed: [],
+      modelBreakdowns: [],
+    };
   }
 
   /**
@@ -304,9 +414,13 @@ export class GenerateCommand {
       }
 
       let data = "";
+      // 2s gives Claude Code's pipe enough slack on Windows. The previous
+      // 100ms was tight enough to silently miss stdin on slow handoffs,
+      // dropping us into manual-mode and producing a receipt for the
+      // wrong session.
       const timeout = setTimeout(() => {
         resolve(null);
-      }, 100); // 100ms timeout to avoid hanging
+      }, 2000);
 
       stdin.setEncoding("utf-8");
 

@@ -22,6 +22,13 @@ interface CcusageByIdResponse {
   entries: CcusageEntry[];
 }
 
+export class SessionNotIndexedError extends Error {
+  constructor(public readonly sessionId: string) {
+    super(`ccusage has no data for session ${sessionId} (returned null)`);
+    this.name = "SessionNotIndexedError";
+  }
+}
+
 export class DataFetcher {
   /**
    * Fetch accurate session data by exact session ID.
@@ -35,7 +42,15 @@ export class DataFetcher {
       { timeout: 30000 },
     );
 
-    const data: CcusageByIdResponse = JSON.parse(stdout);
+    const data: CcusageByIdResponse | null = JSON.parse(stdout);
+
+    // ccusage emits literal `null` (exit 0) when the session is unknown
+    // — either truly missing, or the indexer hasn't caught up to a
+    // just-ended session yet. Surface this as a typed signal so callers
+    // can retry/backoff rather than choking on `null.entries`.
+    if (data === null) {
+      throw new SessionNotIndexedError(sessionId);
+    }
 
     // Aggregate entries by model
     const modelMap = new Map<
