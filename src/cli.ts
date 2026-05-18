@@ -7,10 +7,11 @@ import { SetupCommand } from "./commands/setup.js";
 
 const program = new Command();
 
+// Keep in sync with package.json.
 program
   .name("claude-receipts")
-  .description("Generate quirky, shareable receipts for your Claude Code usage")
-  .version("1.0.0");
+  .description("Generate quirky receipts for your Claude Code usage")
+  .version("1.1.0");
 
 // Generate command
 program

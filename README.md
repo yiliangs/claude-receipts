@@ -76,13 +76,15 @@ npx claude-receipts generate --location "Paris, France"
 **Options:**
 
 - `-s, --session <id>` - Generate for a specific session ID or UUID prefix
-- `-o, --output <format>` - Output format: "html", "console", or "printer" (supports multiple, comma-separated)
+- `-o, --output <format>` - Output format: "html", "png", "pdf", "console", or "printer" (supports multiple, comma-separated or repeated)
 - `-l, --location <text>` - Override location detection
 - `-p, --printer <name>` - Printer interface (e.g., "usb", "tcp://192.168.1.100")
 
 **Output Formats:**
 
 - `html` - Beautiful styled receipt saved to `~/.claude-receipts/projects/`
+- `png` - Rasterized receipt image (rendered via headless Chromium)
+- `pdf` - PDF receipt (rendered via headless Chromium)
 - `console` - ASCII art display in terminal
 - `printer` - Send to thermal printer (requires Epson TM-T88V or compatible)
 
@@ -168,7 +170,7 @@ Location is determined in this order:
 
 ## Requirements
 
-- Node.js >= 22.0.0
+- Node.js >= 20.0.0
 - Claude Code (for automatic generation)
 
 ## Thermal Printing
@@ -187,7 +189,6 @@ The receipt includes:
 - Session details and location
 - Token breakdown by model (input, output, cache read/write)
 - Total cost
-- QR code linking to the GitHub repo
 
 ## Troubleshooting
 
@@ -218,7 +219,11 @@ You should see a `SessionEnd` hook pointing to `claude-receipts`.
 
 ### Session shows wrong cost or is missing
 
-Very short sessions (e.g., just "hello world" + immediate exit) may not appear in ccusage yet. The hook will exit silently rather than printing a wrong receipt. For sessions that exist, the package now uses `ccusage session --id` to fetch accurate totals rather than sub-session slices.
+ccusage's indexer can lag behind a just-ended session by 10 to 20 seconds. The hook now retries the lookup with exponential backoff (up to roughly 26 seconds total) before falling back to a $0 receipt that captures location, duration, and prompt counts but no cost data. Very short sessions with no API calls legitimately have no ccusage entries; those will always render at $0.
+
+For sessions ccusage knows about, the package uses `ccusage session --id` to fetch accurate totals rather than sub-session slices.
+
+Diagnostic events are appended to `~/.claude-receipts/hook.log` on every hook fire.
 
 ### Printer not found
 
@@ -239,7 +244,7 @@ For network printers, use `--printer tcp://<ip-address>` with port 9100 (default
 - [x] Real thermal receipt printing (Epson TM-T88V)
 - [x] Accurate session cost tracking (via `ccusage --id`)
 - [x] Session matching by UUID or prefix
-- [ ] Image export (PNG/JPEG)
+- [x] Image export (PNG and PDF, via headless Chromium)
 - [ ] Plugin for Opencode ([opencode issue](https://github.com/anomalyco/opencode/issues/10524))
 
 ## License
