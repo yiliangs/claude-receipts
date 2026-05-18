@@ -1,6 +1,16 @@
 # Claude Receipts
 
-> **A note from the author:**
+> **About this fork:**
+>
+> Intended as a digital-only version of the original, with a few tweaks on the printed/rendered receipt: project + branch row in the header, current weather in the footer, and the share-to-third-party button removed. The thermal-printing path is still present but not the focus here.
+
+![A screenshot of an example receipt](screenshot.png)
+
+<details>
+
+<summary><strong>Original author's photos</strong></summary>
+
+> **A note from the original author:**
 >
 > This has been one of my favourite creative side projects yet (and just in time for Opus 4.6).
 >
@@ -10,19 +20,13 @@
 >
 > I hope you enjoy it too.
 
-![A photos of an example printed receipt](thermal-receipt.jpeg)
+## Thermal receipt
 
-<details>
-
-<summary><strong>More photos / screenshots</strong></summary>
+![A photo of an example printed receipt](thermal-receipt.jpeg)
 
 ## Full thermal receipt
 
-![A photos of an example printed receipt](full-thermal-receipt.jpeg)
-
-## HTML receipt
-
-![A screenshot of an example receipt](screenshot.png)
+![A photo of an example printed receipt](full-thermal-receipt.jpeg)
 
 </details>
 
