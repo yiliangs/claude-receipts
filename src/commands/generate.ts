@@ -1,5 +1,5 @@
 import { stdin } from "process";
-import { mkdirSync, appendFileSync } from "fs";
+import { mkdirSync, appendFileSync, existsSync } from "fs";
 import { join } from "path";
 import chalk from "chalk";
 import boxen from "boxen";
@@ -422,11 +422,23 @@ export class GenerateCommand {
   }
 
   /**
-   * Build the standard output path: ~/.claude-receipts/projects/<slug>-<ts>.<ext>
+   * Build the standard output path. Defaults to H:/My Drive/claude-receipts
+   * (Yiliang's Google Drive sync); falls back to ~/.claude-receipts/projects/
+   * when the drive isn't mounted, so non-Windows / unmounted runs don't crash.
    */
   private outputPathFor(fileBase: string, ext: string): string {
+    return `${this.receiptsRoot()}/${fileBase}.${ext}`;
+  }
+
+  /**
+   * Resolve the root folder for receipts + logbook. See outputPathFor for the
+   * fallback rationale.
+   */
+  receiptsRoot(): string {
+    const primary = "H:/My Drive/claude-receipts";
+    if (existsSync("H:/My Drive")) return primary;
     const home = process.env.HOME || process.env.USERPROFILE || "";
-    return `${home}/.claude-receipts/projects/${fileBase}.${ext}`;
+    return `${home}/.claude-receipts/projects`;
   }
 
   /**
