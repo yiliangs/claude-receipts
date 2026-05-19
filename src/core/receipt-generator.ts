@@ -122,6 +122,19 @@ export class ReceiptGenerator {
       }
     }
 
+    // Session-level duration row — sits with the line items, under Cache read.
+    lines.push(
+      this.padLine(
+        "  Duration",
+        "",
+        formatDuration(
+          data.transcriptData.startTime,
+          data.transcriptData.endTime,
+        ),
+      ),
+    );
+    lines.push("");
+
     // Totals
     lines.push(SEPARATOR);
     lines.push(

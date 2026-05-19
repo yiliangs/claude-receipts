@@ -408,6 +408,17 @@ export class HtmlRenderer {
       }
     }
 
+    // Session-level duration row — sits with the line items, under Cache read.
+    html += `<div class="line-item">
+      <span>  Duration</span>
+      <span>${this.escapeHtml(
+        formatDuration(
+          data.transcriptData.startTime,
+          data.transcriptData.endTime,
+        ),
+      )}</span>
+    </div>`;
+
     html += "</div>";
     return html;
   }
