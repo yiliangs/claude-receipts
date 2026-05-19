@@ -6,7 +6,8 @@ import boxen from "boxen";
 import ora from "ora";
 import { exec } from "child_process";
 import { promisify } from "util";
-import { DataFetcher, SessionNotIndexedError } from "../core/data-fetcher.js";
+import { UsageCalculator } from "../core/usage-calculator.js";
+import { SessionFinder } from "../core/session-finder.js";
 import { TranscriptParser } from "../core/transcript-parser.js";
 import { ReceiptGenerator } from "../core/receipt-generator.js";
 import { HtmlRenderer } from "../core/html-renderer.js";
@@ -18,7 +19,6 @@ import { LocationDetector } from "../utils/location.js";
 import { WeatherFetcher } from "../utils/weather.js";
 import type { SessionEndHookData } from "../types/session-hook.js";
 import type { ReceiptData } from "../core/receipt-generator.js";
-import type { CcusageSession } from "../types/ccusage.js";
 
 const execAsync = promisify(exec);
 
@@ -32,7 +32,8 @@ export interface GenerateOptions {
 }
 
 export class GenerateCommand {
-  private dataFetcher = new DataFetcher();
+  private usageCalculator = new UsageCalculator();
+  private sessionFinder = new SessionFinder();
   private transcriptParser = new TranscriptParser();
   private receiptGenerator = new ReceiptGenerator();
   private htmlRenderer = new HtmlRenderer();
@@ -65,59 +66,31 @@ export class GenerateCommand {
       // Load config
       const config = await this.configManager.loadConfig();
 
-      // Fetch session data from ccusage
-      spinner.text = "Fetching session data...";
-
-      let sessionData;
-      try {
-        if (actualSessionId) {
-          // From hook or when we have the full UUID — fetch directly by ID
-          // for accurate totals (avoids sub-session slice issue with --breakdown)
-          sessionData = await this.fetchSessionWithRetry(actualSessionId);
-        } else {
-          // Manual mode — discover session by prefix/name, then fetch accurate data
-          sessionData =
-            await this.dataFetcher.fetchSessionData(options.session);
-        }
-        this.logHookEvent(`ccusage ok cost=${sessionData.totalCost} tokens=${sessionData.totalTokens}`);
-      } catch (err) {
-        const firstMsg = err instanceof Error ? err.message : String(err);
-
-        if (stdinData && actualSessionId) {
-          // ccusage exhausted retries — synthesize an empty-cost receipt
-          // rather than vanishing silently. Sessions with no API calls
-          // legitimately have no ccusage data.
-          this.logHookEvent(`ccusage gave up: ${firstMsg} — synthesizing empty session`);
-          sessionData = this.makeEmptySessionData(actualSessionId);
-        } else if (stdinData) {
-          // Hook mode but no session ID — can't recover; bail with a log.
-          this.logHookEvent(`hook mode but no session_id — giving up: ${firstMsg}`);
-          spinner.stop();
-          return;
-        } else {
-          throw err;
-        }
-      }
-
-      // Determine transcript path if not from hook
+      // Manual mode — resolve transcript path from a UUID prefix (or most
+      // recent) by scanning ~/.claude/projects/, no external indexer.
       if (!transcriptPath) {
-        // Try to extract actual session ID from projectPath
-        // Format: "project-name/actual-session-id"
-        if (
-          sessionData.projectPath &&
-          sessionData.projectPath !== "Unknown Project"
-        ) {
-          const parts = sessionData.projectPath.split("/");
-          actualSessionId = parts[parts.length - 1]; // Last part is the actual session ID
-
-          const home = process.env.HOME || process.env.USERPROFILE || "";
-          transcriptPath = `${home}/.claude/projects/${sessionData.projectPath}.jsonl`;
-        } else {
-          throw new Error(
-            "Cannot determine transcript path. Session has no valid project path.",
-          );
-        }
+        const found = await this.sessionFinder.find(options.session);
+        transcriptPath = found.transcriptPath;
+        actualSessionId = found.sessionId;
+        this.logHookEvent(`manual session=${actualSessionId} transcript=${transcriptPath}`);
       }
+
+      // Compute usage + cost directly from the transcript JSONL.
+      // No subprocess, no retry — the file is what Claude Code just wrote.
+      spinner.text = "Computing session cost...";
+      const sessionData = await this.usageCalculator.calculate(
+        transcriptPath,
+        actualSessionId ?? "",
+      );
+      const unknown = this.usageCalculator.getUnknownModels();
+      if (unknown.length > 0) {
+        this.logHookEvent(
+          `pricing miss for models=${unknown.join(",")} — billed at $0; add to src/core/pricing.ts`,
+        );
+      }
+      this.logHookEvent(
+        `usage cost=${sessionData.totalCost.toFixed(6)} tokens=${sessionData.totalTokens} models=${(sessionData.modelsUsed || []).join(",")}`,
+      );
 
       // Parse transcript
       spinner.text = "Parsing transcript...";
@@ -294,76 +267,6 @@ export class GenerateCommand {
     } catch {
       return null;
     }
-  }
-
-  /**
-   * Call ccusage with exponential backoff when the session hasn't been
-   * indexed yet. ccusage's indexer can take 10–20s to catch up on a
-   * just-ended session; the previous 1.5s single retry was producing
-   * spurious $0.00 receipts for real sessions. SessionEnd runs in
-   * background, so the extra wait is invisible to the user.
-   */
-  private async fetchSessionWithRetry(
-    sessionId: string,
-  ): Promise<CcusageSession> {
-    const delays = [0, 3000, 8000, 15000]; // ~26s total budget
-    let lastErr: unknown;
-
-    for (let i = 0; i < delays.length; i++) {
-      if (delays[i] > 0) {
-        await new Promise((r) => setTimeout(r, delays[i]));
-      }
-      try {
-        const data = await this.dataFetcher.fetchSessionById(sessionId);
-        if (i > 0) {
-          this.logHookEvent(
-            `ccusage ok on attempt ${i + 1} (waited ${delays
-              .slice(0, i + 1)
-              .reduce((a, b) => a + b, 0)}ms)`,
-          );
-        }
-        return data;
-      } catch (err) {
-        lastErr = err;
-        const isNotIndexed = err instanceof SessionNotIndexedError;
-        const msg = err instanceof Error ? err.message : String(err);
-        const willRetry = isNotIndexed && i < delays.length - 1;
-        this.logHookEvent(
-          `ccusage attempt ${i + 1} failed: ${msg}` +
-            (willRetry
-              ? ` — retrying in ${delays[i + 1]}ms`
-              : isNotIndexed
-                ? " — out of retries"
-                : " — non-retryable, bailing"),
-        );
-        // Non-recoverable errors (e.g., ccusage missing) don't get retried.
-        if (!isNotIndexed) break;
-      }
-    }
-
-    throw lastErr instanceof Error
-      ? lastErr
-      : new Error(String(lastErr));
-  }
-
-  /**
-   * Synthesize a zero-cost CcusageSession when ccusage has no data for the
-   * session yet (very short sessions / index lag). The receipt is still
-   * worth rendering — it captures location, duration, and prompts — even
-   * if the cost section reads $0.00.
-   */
-  private makeEmptySessionData(sessionId: string): CcusageSession {
-    return {
-      sessionId,
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheCreationTokens: 0,
-      cacheReadTokens: 0,
-      totalTokens: 0,
-      totalCost: 0,
-      modelsUsed: [],
-      modelBreakdowns: [],
-    };
   }
 
   /**

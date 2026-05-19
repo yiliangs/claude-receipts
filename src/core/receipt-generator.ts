@@ -1,5 +1,5 @@
 import { hostname } from "os";
-import type { CcusageSession } from "../types/ccusage.js";
+import type { SessionUsage } from "../types/session.js";
 import type { ParsedTranscript } from "../types/transcript.js";
 import type { ReceiptConfig } from "../types/config.js";
 import type { WeatherSnapshot } from "../utils/weather.js";
@@ -12,7 +12,7 @@ import {
 import { getHeader, SEPARATOR, LIGHT_SEPARATOR } from "../utils/ascii-art.js";
 
 export interface ReceiptData {
-  sessionData: CcusageSession;
+  sessionData: SessionUsage;
   transcriptData: ParsedTranscript;
   location: string;
   config: ReceiptConfig;
@@ -273,7 +273,7 @@ export class ReceiptGenerator {
   /**
    * Get the main model used in the session
    */
-  private getMainModel(sessionData: CcusageSession): string {
+  private getMainModel(sessionData: SessionUsage): string {
     if (sessionData.modelBreakdowns && sessionData.modelBreakdowns.length > 0) {
       return this.getModelName(sessionData.modelBreakdowns[0].modelName);
     }

@@ -1,5 +1,6 @@
 // Main exports for the package
-export { DataFetcher } from "./core/data-fetcher.js";
+export { UsageCalculator } from "./core/usage-calculator.js";
+export { SessionFinder } from "./core/session-finder.js";
 export { TranscriptParser } from "./core/transcript-parser.js";
 export { ReceiptGenerator } from "./core/receipt-generator.js";
 export { ConfigManager } from "./core/config-manager.js";
@@ -7,11 +8,7 @@ export { LocationDetector } from "./utils/location.js";
 export { GenerateCommand } from "./commands/generate.js";
 
 // Type exports
-export type {
-  CcusageSession,
-  CcusageResponse,
-  ModelBreakdown,
-} from "./types/ccusage.js";
+export type { SessionUsage, ModelBreakdown } from "./types/session.js";
 export type {
   TranscriptMessage,
   ParsedTranscript,

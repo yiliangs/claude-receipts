@@ -8,6 +8,12 @@ export interface TranscriptMessage {
       | Array<{ type: string; text?: string; [key: string]: unknown }>;
     role?: "user" | "assistant";
     model?: string;
+    usage?: {
+      input_tokens: number;
+      output_tokens: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    };
   };
   slug?: string;
   sessionId?: string;
@@ -16,12 +22,6 @@ export interface TranscriptMessage {
   gitBranch?: string;
   timestamp: string;
   uuid?: string;
-  usage?: {
-    input_tokens: number;
-    output_tokens: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-  };
 }
 
 export interface ParsedTranscript {

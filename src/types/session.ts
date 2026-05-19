@@ -1,4 +1,5 @@
-// ccusage JSON response types (actual format from ccusage CLI)
+// Session usage shape consumed by the receipt renderers. Computed from
+// the transcript JSONL by UsageCalculator (no external indexer involved).
 
 export interface ModelBreakdown {
   modelName: string;
@@ -9,7 +10,7 @@ export interface ModelBreakdown {
   cost: number;
 }
 
-export interface CcusageSession {
+export interface SessionUsage {
   sessionId: string;
   inputTokens: number;
   outputTokens: number;
@@ -21,16 +22,4 @@ export interface CcusageSession {
   modelsUsed?: string[];
   modelBreakdowns?: ModelBreakdown[];
   projectPath?: string;
-}
-
-export interface CcusageResponse {
-  sessions: CcusageSession[];
-  totals: {
-    inputTokens: number;
-    outputTokens: number;
-    cacheCreationTokens: number;
-    cacheReadTokens: number;
-    totalCost: number;
-    totalTokens: number;
-  };
 }

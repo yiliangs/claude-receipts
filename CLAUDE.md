@@ -36,19 +36,28 @@ npm run prepublishOnly  # Runs build automatically
 The package operates in two modes:
 
 1. **Hook Mode** (automatic): SessionEnd hook → stdin JSON → generate HTML → open browser
-2. **Manual Mode**: CLI command → fetch recent session → output to console/HTML
+2. **Manual Mode**: CLI command → discover recent session → output to console/HTML
 
 ```
 SessionEnd Hook
   ↓ (stdin with session_id, transcript_path)
 GenerateCommand
   ↓
-DataFetcher (calls ccusage CLI) + TranscriptParser (reads JSONL)
+SessionFinder (only if manual mode — scans ~/.claude/projects/)
   ↓
-ReceiptGenerator (creates text) + HtmlRenderer (creates styled HTML)
+UsageCalculator (reads JSONL, prices via pricing.ts)
+  + TranscriptParser (reads JSONL for metadata)
   ↓
-Save to ~/.claude-receipts/projects/[session-slug].html + open browser
+ReceiptGenerator (text) + HtmlRenderer (styled HTML)
+  ↓
+LogbookWriter appends a row to logbook.csv
+  ↓
+Save to H:/My Drive/claude-receipts/[slug-timestamp].html (or fallback)
+  + open browser (hook mode only)
 ```
+
+Cost is computed inline from the transcript JSONL — no ccusage, no
+subprocess, no indexer-lag retries. Hook finishes in ~1s on the fast path.
 
 ### Key Components
 
@@ -60,10 +69,13 @@ Save to ~/.claude-receipts/projects/[session-slug].html + open browser
 
 **Core Logic** (`src/core/`)
 
-- `data-fetcher.ts` - Executes `npx ccusage session --json --breakdown` to get usage data
+- `usage-calculator.ts` - Reads transcript JSONL, sums per-model usage, prices via `pricing.ts`, returns `SessionUsage`
+- `pricing.ts` - Static per-million-token price table for Claude models; verified against historical ccusage output. Update when new models ship.
+- `session-finder.ts` - Manual-mode discovery: scans `~/.claude/projects/**/*.jsonl` by UUID prefix or mtime
 - `transcript-parser.ts` - Parses `~/.claude/projects/[path].jsonl` for session metadata (slug, timestamps, message counts)
 - `receipt-generator.ts` - Creates ASCII text receipt with Claude logo, location, costs
 - `html-renderer.ts` - Generates standalone HTML with embedded CSS (thermal printer aesthetic)
+- `logbook-writer.ts` - Appends one row per session to `<receiptsRoot>/logbook.csv` for cross-session summarization
 - `config-manager.ts` - Handles `~/.claude-receipts.config.json` I/O
 
 **Utils** (`src/utils/`)
@@ -81,12 +93,12 @@ Save to ~/.claude-receipts/projects/[session-slug].html + open browser
 - When from hook: uses `transcript_path` directly, auto-opens browser, no console output
 - Hook cannot output to console (runs after session closes), hence HTML + browser approach
 
-**ccusage Data Format**
+**Usage Calculation**
 
-- Actual field names are camelCase: `sessionId`, `inputTokens`, `modelBreakdowns`, etc.
-- Session IDs are complex; display names differ from actual IDs
-- `projectPath` format: `"project-name/actual-session-id"` - split to get session ID
-- Only sessions with valid `projectPath` (not "Unknown Project") are usable
+- The transcript JSONL is canonical: every assistant message carries `message.usage` (input/output/cache_creation/cache_read tokens) plus `message.model`
+- Per-model accumulators feed `pricing.ts` to compute cost
+- 5-minute vs 1-hour cache TTL is not distinguished in the JSONL — we price all cache writes at the 5-minute rate (1.25× input); 1h-only sessions underbill by ≤12% of cache-write cost (typically <2% of total)
+- Unknown models bill at $0 and surface via `getUnknownModels()` → logged to `hook.log` so stale price tables are visible
 
 **File Naming**
 
@@ -117,7 +129,7 @@ Save to ~/.claude-receipts/projects/[session-slug].html + open browser
 
 All types in `src/types/`:
 
-- `ccusage.ts` - Matches actual ccusage CLI JSON output (camelCase fields)
+- `session.ts` - `SessionUsage` + `ModelBreakdown` shapes consumed by the renderers
 - `transcript.ts` - JSONL message structure and parsed summary
 - `config.ts` - Minimal user configuration
 - `session-hook.ts` - SessionEnd stdin JSON format
@@ -132,9 +144,8 @@ All types in `src/types/`:
 ## Known Constraints
 
 - Cannot output to console from SessionEnd hook (terminal already closed)
-- ccusage must be installed (bundled as dependency)
-- Requires valid `projectPath` from ccusage to find transcript
-- Session data has slight delay; ccusage may not have processed most recent session immediately
+- New Claude model launches require a `pricing.ts` entry — until added, sessions bill at $0 (logged as `pricing miss`)
+- 5m vs 1h cache TTL is not distinguished in the transcript; cache writes are priced at the 5m rate
 - Browser auto-open uses platform-specific commands (`open`, `start`, `xdg-open`)
 
 ## Hook Installation
