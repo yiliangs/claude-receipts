@@ -32,14 +32,15 @@ export class ReceiptGenerator {
     lines.push(SEPARATOR);
     lines.push("");
 
-    // Session info (location now lives in the weather footer)
-    lines.push(
-      this.centerText(`Session: ${data.transcriptData.sessionSlug}`, 35),
-    );
+    // Session info (location now lives in the weather footer).
+    // Order: project → session → machine → date.
     const projectLine = this.projectLine(data.transcriptData);
     if (projectLine) {
       lines.push(this.centerText(projectLine, 35));
     }
+    lines.push(
+      this.centerText(`Session: ${data.transcriptData.sessionSlug}`, 35),
+    );
     lines.push(this.centerText(`Machine: ${hostname()}`, 35));
     lines.push(
       this.centerText(

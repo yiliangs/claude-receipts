@@ -285,10 +285,10 @@ export class HtmlRenderer {
  ▘▘ ▝▝
 </div>
         <div class="meta">
+          ${this.renderProjectRow(data)}
           <div class="meta-row">
             <div>Session</div><div class="dots">....................</div><div class="value">${this.escapeHtml(data.transcriptData.sessionSlug)}</div>
           </div>
-          ${this.renderProjectRow(data)}
           <div class="meta-row">
             <div>Machine</div><div class="dots">....................</div><div class="value">${this.escapeHtml(hostname())}</div>
           </div>
