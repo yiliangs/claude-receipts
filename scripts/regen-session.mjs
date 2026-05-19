@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 // Manually regenerate a receipt for a given session ID + transcript path.
 // Bypasses stdin parsing (which is flaky to drive from Git Bash on Windows).
-import { DataFetcher } from "../dist/core/data-fetcher.js";
+import { UsageCalculator } from "../dist/core/usage-calculator.js";
 import { TranscriptParser } from "../dist/core/transcript-parser.js";
 import { HtmlRenderer } from "../dist/core/html-renderer.js";
 import { ImageRenderer } from "../dist/core/image-renderer.js";
 import { ReceiptGenerator } from "../dist/core/receipt-generator.js";
 import { ConfigManager } from "../dist/core/config-manager.js";
+import { LogbookWriter } from "../dist/core/logbook-writer.js";
 import { LocationDetector } from "../dist/utils/location.js";
 import { WeatherFetcher } from "../dist/utils/weather.js";
 import { writeFile, mkdir } from "fs/promises";
-import { dirname, join } from "path";
+import { existsSync } from "fs";
+import { join } from "path";
 
 const [, , sessionId, transcriptPath] = process.argv;
 if (!sessionId || !transcriptPath) {
@@ -18,18 +20,23 @@ if (!sessionId || !transcriptPath) {
   process.exit(1);
 }
 
-const fetcher = new DataFetcher();
+const usage = new UsageCalculator();
 const parser = new TranscriptParser();
 const html = new HtmlRenderer();
 const png = new ImageRenderer();
 const recGen = new ReceiptGenerator();
 const cfgMgr = new ConfigManager();
+const logbook = new LogbookWriter();
 const loc = new LocationDetector();
 const wx = new WeatherFetcher();
 
 const config = await cfgMgr.loadConfig();
-const sessionData = await fetcher.fetchSessionById(sessionId);
-console.log(`ccusage: cost=$${sessionData.totalCost.toFixed(2)} tokens=${sessionData.totalTokens}`);
+const sessionData = await usage.calculate(transcriptPath, sessionId);
+const unknown = usage.getUnknownModels();
+if (unknown.length > 0) {
+  console.warn(`pricing miss for: ${unknown.join(",")} — billed at $0`);
+}
+console.log(`usage: cost=$${sessionData.totalCost.toFixed(2)} tokens=${sessionData.totalTokens} models=${(sessionData.modelsUsed || []).join(",")}`);
 
 const transcriptData = await parser.parseTranscript(transcriptPath, sessionId);
 const [location, weather] = await Promise.all([
@@ -47,8 +54,11 @@ const slug = transcriptData.sessionSlug || sessionId;
 const fileBase = `${slug}-${ts}`;
 
 const home = process.env.HOME || process.env.USERPROFILE || "";
-const outDir = join(home, ".claude-receipts", "projects");
+const outDir = existsSync("H:/My Drive")
+  ? "H:/My Drive/claude-receipts"
+  : join(home, ".claude-receipts", "projects");
 await mkdir(outDir, { recursive: true });
+await logbook.append(outDir, receiptData);
 
 const htmlPath = join(outDir, `${fileBase}.html`);
 const pngPath = join(outDir, `${fileBase}.png`);
