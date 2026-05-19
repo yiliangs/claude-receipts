@@ -1,3 +1,4 @@
+import { hostname } from "os";
 import type { CcusageSession } from "../types/ccusage.js";
 import type { ParsedTranscript } from "../types/transcript.js";
 import type { ReceiptConfig } from "../types/config.js";
@@ -39,6 +40,7 @@ export class ReceiptGenerator {
     if (projectLine) {
       lines.push(this.centerText(projectLine, 35));
     }
+    lines.push(this.centerText(`Machine: ${hostname()}`, 35));
     lines.push(
       this.centerText(
         formatDateTime(data.transcriptData.endTime, data.config.timezone),

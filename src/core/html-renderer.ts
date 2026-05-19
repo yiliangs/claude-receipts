@@ -1,3 +1,4 @@
+import { hostname } from "os";
 import type { ReceiptData } from "./receipt-generator.js";
 import type { WeatherSnapshot } from "../utils/weather.js";
 import {
@@ -288,6 +289,9 @@ export class HtmlRenderer {
             <div>Session</div><div class="dots">....................</div><div class="value">${this.escapeHtml(data.transcriptData.sessionSlug)}</div>
           </div>
           ${this.renderProjectRow(data)}
+          <div class="meta-row">
+            <div>Machine</div><div class="dots">....................</div><div class="value">${this.escapeHtml(hostname())}</div>
+          </div>
           <div class="meta-row">
             <div>Date</div><div class="dots">....................</div><div class="value">${formatDateTime(data.transcriptData.endTime, data.config.timezone)}</div>
           </div>
