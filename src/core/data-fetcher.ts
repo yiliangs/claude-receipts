@@ -44,11 +44,13 @@ export class DataFetcher {
 
     const data: CcusageByIdResponse | null = JSON.parse(stdout);
 
-    // ccusage emits literal `null` (exit 0) when the session is unknown
-    // — either truly missing, or the indexer hasn't caught up to a
-    // just-ended session yet. Surface this as a typed signal so callers
-    // can retry/backoff rather than choking on `null.entries`.
-    if (data === null) {
+    // ccusage emits literal `null` (exit 0) when it has never seen the
+    // session. It can also emit a partial object (no `entries` field) for
+    // a session that is mid-index right after SessionEnd. Both states are
+    // recoverable by waiting — surface as a typed signal so callers can
+    // retry, rather than letting a `TypeError: data.entries is not
+    // iterable` escape and be misclassified as fatal.
+    if (data === null || !Array.isArray(data.entries)) {
       throw new SessionNotIndexedError(sessionId);
     }
 

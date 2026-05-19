@@ -320,11 +320,14 @@ export class GenerateCommand {
         lastErr = err;
         const isNotIndexed = err instanceof SessionNotIndexedError;
         const msg = err instanceof Error ? err.message : String(err);
+        const willRetry = isNotIndexed && i < delays.length - 1;
         this.logHookEvent(
           `ccusage attempt ${i + 1} failed: ${msg}` +
-            (i < delays.length - 1
+            (willRetry
               ? ` — retrying in ${delays[i + 1]}ms`
-              : " — out of retries"),
+              : isNotIndexed
+                ? " — out of retries"
+                : " — non-retryable, bailing"),
         );
         // Non-recoverable errors (e.g., ccusage missing) don't get retried.
         if (!isNotIndexed) break;
