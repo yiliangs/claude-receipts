@@ -74,6 +74,16 @@ export class WeatherFetcher {
  * Map a WMO weather code (Open-Meteo) to a short verbal label and a
  * monochrome unicode glyph that fits the receipt's black/white aesthetic.
  *
+ * Icon set is restricted to codepoints with default *text* presentation
+ * (☀ ☁ ☂ ❄ ☈). The obvious choices ⛅ U+26C5 and ⛈ U+26C8 default to
+ * emoji presentation — Chromium's font fallback grabs Segoe UI Emoji
+ * and renders them in color, breaking the receipt's black-and-white
+ * aesthetic. Neither U+FE0E (VS15) nor `font-variant-emoji: text`
+ * reliably overrides that fallback when no font in the stack actually
+ * ships a text glyph for the emoji codepoint. Solution: don't use the
+ * emoji codepoints at all. Partly Cloudy shares its icon with Overcast
+ * — the text label "Partly Cloudy" carries the distinction.
+ *
  * Code reference: https://open-meteo.com/en/docs (Weather variable doc).
  */
 function describeWmo(code: number): { description: string; icon: string } {
@@ -83,7 +93,7 @@ function describeWmo(code: number): { description: string; icon: string } {
     case 1:
       return { description: "Mostly Clear", icon: "☀" };
     case 2:
-      return { description: "Partly Cloudy", icon: "⛅" };
+      return { description: "Partly Cloudy", icon: "☁" };
     case 3:
       return { description: "Overcast", icon: "☁" };
     case 45:
@@ -117,10 +127,10 @@ function describeWmo(code: number): { description: string; icon: string } {
     case 86:
       return { description: "Snow Showers", icon: "❄" };
     case 95:
-      return { description: "Thunderstorm", icon: "⛈" };
+      return { description: "Thunderstorm", icon: "☈" };
     case 96:
     case 99:
-      return { description: "Thunderstorm w/ Hail", icon: "⛈" };
+      return { description: "Thunderstorm w/ Hail", icon: "☈" };
     default:
       return { description: "Unknown", icon: "·" };
   }
