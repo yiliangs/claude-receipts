@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
+import { fileURLToPath } from "url";
 import chalk from "chalk";
 import prompts from "prompts";
 import ora from "ora";
@@ -201,8 +202,26 @@ export class SetupCommand {
       settings.hooks.SessionEnd = [];
     }
 
-    // Check if our hook already exists
-    const hookCommand = "npx claude-receipts@latest generate";
+    // Pin to this local checkout so changes are picked up without an npm
+    // publish/install cycle. The bin path is rewritten as $HOME-relative
+    // (with forward slashes) so the same settings.json works across machines
+    // that mirror the repo at the same location under HOME.
+    const binPath = resolve(
+      fileURLToPath(import.meta.url),
+      "..",
+      "..",
+      "..",
+      "bin",
+      "claude-receipts.js",
+    );
+    const home = process.env.HOME || process.env.USERPROFILE || "";
+    const normalized = binPath.replace(/\\/g, "/");
+    const homeNorm = home.replace(/\\/g, "/");
+    const relPath =
+      homeNorm && normalized.toLowerCase().startsWith(homeNorm.toLowerCase())
+        ? "$HOME" + normalized.slice(homeNorm.length)
+        : normalized;
+    const hookCommand = `node "${relPath}" generate`;
     const existingHook = settings.hooks.SessionEnd.find((h) =>
       h.hooks.some((hook) => hook.command.includes("claude-receipts")),
     );
