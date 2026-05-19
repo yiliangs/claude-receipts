@@ -13,6 +13,7 @@ import { HtmlRenderer } from "../core/html-renderer.js";
 import { ImageRenderer } from "../core/image-renderer.js";
 import { ThermalPrinterRenderer } from "../core/thermal-printer.js";
 import { ConfigManager } from "../core/config-manager.js";
+import { LogbookWriter } from "../core/logbook-writer.js";
 import { LocationDetector } from "../utils/location.js";
 import { WeatherFetcher } from "../utils/weather.js";
 import type { SessionEndHookData } from "../types/session-hook.js";
@@ -38,6 +39,7 @@ export class GenerateCommand {
   private imageRenderer = new ImageRenderer();
   private thermalPrinter = new ThermalPrinterRenderer();
   private configManager = new ConfigManager();
+  private logbookWriter = new LogbookWriter();
   private locationDetector = new LocationDetector();
   private weatherFetcher = new WeatherFetcher();
 
@@ -160,6 +162,11 @@ export class GenerateCommand {
       };
 
       const receipt = this.receiptGenerator.generateReceipt(receiptData);
+
+      // Append to the master logbook before rendering outputs. The logbook
+      // captures every session even when downstream renderers fail.
+      await this.logbookWriter.append(this.receiptsRoot(), receiptData);
+      this.logHookEvent(`logbook appended to ${this.receiptsRoot()}/logbook.csv`);
 
       spinner.succeed("Receipt generated!");
 
