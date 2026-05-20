@@ -203,25 +203,30 @@ export class SetupCommand {
     }
 
     // Pin to this local checkout so changes are picked up without an npm
-    // publish/install cycle. The bin path is rewritten as $HOME-relative
+    // publish/install cycle. The wrapper path is rewritten as $HOME-relative
     // (with forward slashes) so the same settings.json works across machines
     // that mirror the repo at the same location under HOME.
-    const binPath = resolve(
+    //
+    // We point at bin/run-hook.sh rather than calling node directly: it
+    // resolves node at run time (PATH → WinGet versioned dir → nvm), which
+    // both fixes Windows hook shells with a stripped PATH and survives node
+    // upgrades that would move a baked-in process.execPath.
+    const wrapperPath = resolve(
       fileURLToPath(import.meta.url),
       "..",
       "..",
       "..",
       "bin",
-      "claude-receipts.js",
+      "run-hook.sh",
     );
     const home = process.env.HOME || process.env.USERPROFILE || "";
-    const normalized = binPath.replace(/\\/g, "/");
     const homeNorm = home.replace(/\\/g, "/");
+    const normalized = wrapperPath.replace(/\\/g, "/");
     const relPath =
       homeNorm && normalized.toLowerCase().startsWith(homeNorm.toLowerCase())
         ? "$HOME" + normalized.slice(homeNorm.length)
         : normalized;
-    const hookCommand = `node "${relPath}" generate`;
+    const hookCommand = `"${relPath}" generate`;
     const existingHook = settings.hooks.SessionEnd.find((h) =>
       h.hooks.some((hook) => hook.command.includes("claude-receipts")),
     );
