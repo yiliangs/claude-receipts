@@ -4,15 +4,25 @@ import type { ReceiptConfig } from "../types/config.js";
 
 export class LocationDetector {
   /**
-   * Get location string from config or geolocation
+   * Resolve the geographic location string for the receipt. Priority:
+   *   1. `override` (e.g. CLI `--location`)
+   *   2. `config.location`
+   *   3. IP geolocation (offline geoip-lite)
+   *   4. Fallback "The Cloud"
+   *
+   * Path-like inputs at (1) and (2) are silently ignored so a stale config
+   * value (e.g. `H:\My Drive\claude-receipts` from before validation existed)
+   * can't poison the logbook with file paths in the city column.
    */
-  async getLocation(config: ReceiptConfig): Promise<string> {
-    // Priority 1: Config file
-    if (config.location) {
+  async getLocation(config: ReceiptConfig, override?: string): Promise<string> {
+    if (override && !LocationDetector.looksLikePath(override)) {
+      return override;
+    }
+
+    if (config.location && !LocationDetector.looksLikePath(config.location)) {
       return config.location;
     }
 
-    // Priority 2: IP geolocation (offline)
     try {
       const location = await this.detectLocationFromIP();
       if (location) {
@@ -22,8 +32,16 @@ export class LocationDetector {
       // Silent fail, use fallback
     }
 
-    // Priority 3: Fallback
     return "The Cloud";
+  }
+
+  /**
+   * True if `s` looks like a filesystem path (backslash, Windows drive
+   * prefix, or tilde-home). Geographic strings like "Chicago, IL" never
+   * contain these.
+   */
+  static looksLikePath(s: string): boolean {
+    return /\\/.test(s) || /^[a-zA-Z]:[\\/]/.test(s) || /^~\//.test(s);
   }
 
   /**

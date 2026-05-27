@@ -1,5 +1,6 @@
 import chalk from "chalk";
 import { ConfigManager } from "../core/config-manager.js";
+import { LocationDetector } from "../utils/location.js";
 import type { ReceiptConfig } from "../types/config.js";
 
 export interface ConfigOptions {
@@ -80,6 +81,14 @@ export class ConfigCommand {
     if (!validKeys.includes(trimmedKey)) {
       throw new Error(
         `Invalid config key: ${trimmedKey}. Valid keys: ${validKeys.join(", ")}`,
+      );
+    }
+
+    if (trimmedKey === "location" && LocationDetector.looksLikePath(value)) {
+      throw new Error(
+        `Invalid location "${value}": looks like a filesystem path. ` +
+          `Location should be a city/region (e.g. "Chicago, IL"). ` +
+          `Output directory is not configurable; receipts go to H:/My Drive/claude-receipts when mounted.`,
       );
     }
 
