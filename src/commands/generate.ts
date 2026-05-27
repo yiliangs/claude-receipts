@@ -1,11 +1,12 @@
 import { stdin } from "process";
-import { mkdirSync, appendFileSync, existsSync } from "fs";
+import { existsSync, readFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import chalk from "chalk";
 import boxen from "boxen";
 import ora from "ora";
 import { exec } from "child_process";
 import { promisify } from "util";
+import { logHookEvent } from "../utils/hook-log.js";
 import { UsageCalculator } from "../core/usage-calculator.js";
 import { SessionFinder } from "../core/session-finder.js";
 import { TranscriptParser } from "../core/transcript-parser.js";
@@ -29,6 +30,8 @@ export interface GenerateOptions {
   output?: string[];
   location?: string;
   printer?: string;
+  detach?: boolean;
+  inputFile?: string;
 }
 
 export class GenerateCommand {
@@ -45,20 +48,28 @@ export class GenerateCommand {
   private weatherFetcher = new WeatherFetcher();
 
   async execute(options: GenerateOptions): Promise<void> {
+    // Note: --detach is handled in cli.ts by a built-ins-only shim
+    // (detach-shim.ts) that never imports this module's heavy graph. By the
+    // time execute() runs we are always the worker (or a manual invocation).
     const spinner = ora("Generating receipt...").start();
     this.logHookEvent(`invoke pid=${process.pid} cwd=${process.cwd()}`);
 
     try {
-      // Check if stdin has data (called from hook)
-      const stdinData = await this.readStdinIfAvailable();
+      // Read hook JSON. --input-file (the worker leg of --detach) reads from
+      // disk; otherwise we probe stdin.
+      const stdinData = options.inputFile
+        ? this.readInputFile(options.inputFile)
+        : await this.readStdinIfAvailable();
       let transcriptPath: string | undefined;
       let actualSessionId: string | undefined;
 
       if (stdinData) {
-        // Called from SessionEnd hook - use the transcript path directly!
         transcriptPath = stdinData.transcript_path;
         actualSessionId = stdinData.session_id;
-        this.logHookEvent(`stdin session=${actualSessionId} transcript=${transcriptPath}`);
+        const src = options.inputFile ? "input-file" : "stdin";
+        this.logHookEvent(
+          `${src} session=${actualSessionId} reason=${stdinData.reason ?? "?"} transcript=${transcriptPath}`,
+        );
       } else {
         this.logHookEvent(`stdin none (TTY=${stdin.isTTY ?? "?"}) — manual mode`);
       }
@@ -115,9 +126,7 @@ export class GenerateCommand {
       // null result just hides the footer block.
       spinner.text = "Resolving location and weather...";
       const [location, weather] = await Promise.all([
-        options.location
-          ? Promise.resolve(options.location)
-          : this.locationDetector.getLocation(config),
+        this.locationDetector.getLocation(config, options.location),
         this.weatherFetcher.getCurrentWeather(),
       ]);
       this.logHookEvent(
@@ -230,25 +239,11 @@ export class GenerateCommand {
   }
 
   /**
-   * Append a one-line event to ~/.claude-receipts/hook.log. Fails silently
-   * so logging never breaks the hook. The log is the only window into hook
-   * behavior — SessionEnd has no console.
+   * Append a one-line event to the hook log. Delegates to the shared
+   * (built-ins-only) logger so the detach shim and worker write the same file.
    */
   private logHookEvent(message: string): void {
-    try {
-      const home = process.env.HOME || process.env.USERPROFILE || "";
-      if (!home) return;
-      const dir = join(home, ".claude-receipts");
-      mkdirSync(dir, { recursive: true });
-      const stamp = new Date().toISOString();
-      appendFileSync(
-        join(dir, "hook.log"),
-        `[${stamp}] ${message}\n`,
-        "utf-8",
-      );
-    } catch {
-      // log failures are not worth crashing the hook for
-    }
+    logHookEvent(message);
   }
 
   /**
@@ -369,6 +364,28 @@ export class GenerateCommand {
    */
   private outputToConsole(receipt: string): void {
     this.displayToConsole(receipt);
+  }
+
+  /**
+   * Worker path: read the hook JSON the shim wrote to disk, then delete it.
+   * Returning null mirrors readStdinIfAvailable() so the caller can treat
+   * both inputs uniformly.
+   */
+  private readInputFile(path: string): SessionEndHookData | null {
+    try {
+      const raw = readFileSync(path, "utf-8");
+      const parsed = JSON.parse(raw) as SessionEndHookData;
+      try {
+        unlinkSync(path);
+      } catch {
+        // leftover temp files are harmless; don't fail the receipt over it
+      }
+      return parsed;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "unknown";
+      this.logHookEvent(`input-file read failed (${path}): ${msg}`);
+      return null;
+    }
   }
 
   /**

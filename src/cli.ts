@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 
 import { Command, Option } from "commander";
-import { GenerateCommand } from "./commands/generate.js";
-import { ConfigCommand } from "./commands/config.js";
-import { SetupCommand } from "./commands/setup.js";
+
+// Command classes are imported lazily inside each action. generate.ts alone
+// pulls in geoip-lite + date-fns + the renderer graph (~1.8s of module-load
+// time). The SessionEnd hook's `generate --detach` shim must stay off that
+// graph so it can spawn its worker before Claude Code's exit teardown kills it
+// — so nothing heavy may be imported at the top of this file.
 
 const program = new Command();
 
@@ -36,9 +39,24 @@ program
     "-p, --printer <interface>",
     'Printer: "usb" (auto-detect), "usb:VID:PID", "tcp://host:port", or CUPS name',
   )
+  .option(
+    "--detach",
+    "Hook shim mode: read stdin, spawn a detached worker that does the actual work, exit immediately. Used in the SessionEnd hook so /clear and /exit can't kill mid-render children.",
+  )
+  .option(
+    "--input-file <path>",
+    "Read SessionEnd hook JSON from a file instead of stdin. Set automatically by --detach when respawning the worker; the worker deletes the file after reading.",
+  )
   .action(async (options) => {
-    const command = new GenerateCommand();
-    await command.execute(options);
+    // Detach shim: built-ins-only path, no heavy imports. Must stay fast so
+    // the detached worker is spawned before Claude Code tears down the hook.
+    if (options.detach) {
+      const { runDetachShim } = await import("./commands/detach-shim.js");
+      runDetachShim(options);
+      return;
+    }
+    const { GenerateCommand } = await import("./commands/generate.js");
+    await new GenerateCommand().execute(options);
   });
 
 // Config command
@@ -49,8 +67,8 @@ program
   .option("--set <key=value>", "Set a configuration value")
   .option("--reset", "Reset configuration to defaults")
   .action(async (options) => {
-    const command = new ConfigCommand();
-    await command.execute(options);
+    const { ConfigCommand } = await import("./commands/config.js");
+    await new ConfigCommand().execute(options);
   });
 
 // Setup command
@@ -59,8 +77,8 @@ program
   .description("Setup automatic receipt generation via SessionEnd hook")
   .option("--uninstall", "Remove the SessionEnd hook")
   .action(async (options) => {
-    const command = new SetupCommand();
-    await command.execute(options);
+    const { SetupCommand } = await import("./commands/setup.js");
+    await new SetupCommand().execute(options);
   });
 
 // Make generate the default command if no command is specified

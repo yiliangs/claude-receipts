@@ -226,7 +226,12 @@ export class SetupCommand {
       homeNorm && normalized.toLowerCase().startsWith(homeNorm.toLowerCase())
         ? "$HOME" + normalized.slice(homeNorm.length)
         : normalized;
-    const hookCommand = `"${relPath}" generate`;
+    // --detach makes the hook a thin shim: read stdin, spawn a detached
+    // worker, exit in <100ms. Without it, Claude Code's process-tree
+    // teardown on /exit (and shortened kill timer on /clear) truncates the
+    // hook mid-render — png/pdf almost always lost, occasionally even
+    // the usage log entry.
+    const hookCommand = `"${relPath}" generate --detach`;
     const existingHook = settings.hooks.SessionEnd.find((h) =>
       h.hooks.some((hook) => hook.command.includes("claude-receipts")),
     );
