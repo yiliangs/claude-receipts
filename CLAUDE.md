@@ -88,10 +88,17 @@ subprocess, no indexer-lag retries. Hook finishes in ~1s on the fast path.
 
 **SessionEnd Hook Integration**
 
+> ⚠️ **Before changing anything about the hook (receipts firing too often, too
+> rarely, or "hook is cancelled"), read [`SESSIONEND-HOOK-LOG.md`](./SESSIONEND-HOOK-LOG.md).**
+> This bug class has recurred multiple times; the log records the root tension,
+> diagnostics, and invariants so you don't repeat a fix that already happened.
+
 - Hook receives JSON via stdin: `{session_id, transcript_path, cwd, ...}`
 - `GenerateCommand.readStdinIfAvailable()` checks `stdin.isTTY` (false = piped from hook)
 - When from hook: uses `transcript_path` directly, auto-opens browser, no console output
 - Hook cannot output to console (runs after session closes), hence HTML + browser approach
+- **Non-interactive sessions are skipped.** Headless SDK / `claude -p` runs (background automations) each fire SessionEnd with `reason=other`; without a gate they spam a receipt + browser tab + PNG/PDF + logbook row per invocation. The detach shim reads the head of the transcript and bails when `entrypoint` starts with `sdk` (interactive runs report `cli`). Override with `CLAUDE_RECEIPTS_ALL_SESSIONS=1`. The transcript head is read in a 128 KB chunk, never whole — these files can be hundreds of MB.
+- **The `--detach` shim MUST stay import-light — this is load-bearing.** On `/exit`, Claude Code does not reliably wait for SessionEnd hooks; it tears down the hook process tree within ~1s and surfaces "hook is cancelled". The shim's job is to read stdin, spill it to a temp file, and `spawn` a detached worker *before* that teardown — the worker then survives and does the slow rendering off the critical path. This only works if the shim starts fast. `generate.ts`'s module graph (geoip-lite + date-fns + the renderer chain) costs ~1.8s to import; if the shim pays that, it's still starting when the kill arrives → worker never spawns → false negative (works on `/clear` only, since that keeps the process alive). So the shim lives in `src/commands/detach-shim.ts` importing **only Node built-ins + `utils/hook-log.ts`**, and `cli.ts` routes `generate --detach` there via dynamic `import()` and lazy-loads every command class. Result: shim ~0.35s (~0.6s through `run-hook.sh`). **Never add a heavy static import to `cli.ts`, `detach-shim.ts`, or `hook-log.ts`.** The worker leg (`generate --input-file`) loads the full graph and that's fine — it's detached.
 
 **Usage Calculation**
 
