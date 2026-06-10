@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from "fs";
-import { appendFile, writeFile } from "fs/promises";
+import { appendFile, writeFile, readFile, open } from "fs/promises";
 import { dirname, join } from "path";
 import { hostname } from "os";
 import { formatDuration } from "../utils/formatting.js";
@@ -29,25 +29,83 @@ const HEADER = [
 
 export class LogbookWriter {
   /**
-   * Append one row per session to <root>/logbook.csv. Writes the header on
-   * first creation. Failures are swallowed — the logbook is best-effort and
-   * must never block receipt generation.
+   * Record one row per session in <root>/logbook.csv. Writes the header on
+   * first creation. If a row with this session_id already exists it is
+   * rewritten in place rather than appended — a resumed session fires
+   * SessionEnd more than once, and each firing carries the same id with grown
+   * usage; one row per session, holding the latest figures, is what we want.
+   * Failures are swallowed — the logbook is best-effort and must never block
+   * receipt generation.
    */
   async append(root: string, data: ReceiptData): Promise<void> {
     try {
       const path = join(root, "logbook.csv");
       mkdirSync(dirname(path), { recursive: true });
 
-      const row = this.buildRow(data);
-      const csvLine = row.map(this.escapeCell).join(",") + "\n";
+      const csvRow = this.buildRow(data).map(this.escapeCell).join(",");
+      const sessionId = data.sessionData.sessionId || "";
 
       if (!existsSync(path)) {
-        await writeFile(path, HEADER.join(",") + "\n" + csvLine, "utf-8");
-      } else {
-        await appendFile(path, csvLine, "utf-8");
+        await writeFile(path, HEADER.join(",") + "\n" + csvRow + "\n", "utf-8");
+        return;
       }
+
+      // Replace an existing row for the same session_id (de-dupe resumed
+      // sessions) instead of appending a second one.
+      if (sessionId) {
+        const existing = await readFile(path, "utf-8");
+        const lines = existing.split("\n");
+        const idx = lines.findIndex(
+          (l) => this.sessionIdOf(l) === sessionId,
+        );
+        if (idx >= 0) {
+          lines[idx] = csvRow;
+          let out = lines.join("\n");
+          if (!out.endsWith("\n")) out += "\n";
+          await writeFile(path, out, "utf-8");
+          return;
+        }
+      }
+
+      // New session — append. Don't trust the file to be newline-terminated:
+      // an external editor (Excel / Sheets re-saving the CSV on Drive) or a
+      // worker killed mid-append can leave the last line without its "\n",
+      // which would glue the new row on. Prepend "\n" when it's missing.
+      const lead = (await this.endsWithNewline(path)) ? "" : "\n";
+      await appendFile(path, lead + csvRow + "\n", "utf-8");
     } catch {
       // Logbook is auxiliary — never break the hook.
+    }
+  }
+
+  /**
+   * session_id (3rd column) of a raw CSV line, or "" for the header / blank
+   * lines. The first three columns (timestamp, slug, session_id) never contain
+   * commas, so a plain split is safe even though later cells (e.g. a quoted
+   * "City, ST" location) can.
+   */
+  private sessionIdOf(line: string): string {
+    if (!line) return "";
+    const parts = line.split(",");
+    return parts.length >= 3 ? parts[2] : "";
+  }
+
+  /**
+   * True if the file is empty or its final byte is "\n" (so a plain append
+   * lands on a fresh row). Reads only the last byte — the logbook grows to
+   * many rows and is never read whole here. CRLF files still end in "\n", so
+   * a single-byte check is sufficient.
+   */
+  private async endsWithNewline(path: string): Promise<boolean> {
+    const fh = await open(path, "r");
+    try {
+      const { size } = await fh.stat();
+      if (size === 0) return true;
+      const buf = Buffer.alloc(1);
+      await fh.read(buf, 0, 1, size - 1);
+      return buf[0] === 0x0a; // "\n"
+    } finally {
+      await fh.close();
     }
   }
 
