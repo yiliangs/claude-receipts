@@ -7,6 +7,7 @@ import {
   formatDateTime,
   formatDuration,
 } from "../utils/formatting.js";
+import { displayModelName } from "./model-names.js";
 
 export class HtmlRenderer {
   /**
@@ -427,18 +428,7 @@ export class HtmlRenderer {
    * Get clean model name
    */
   private getModelName(model: string): string {
-    const cleaned = model.replace(/-\d{8}$/, "");
-
-    const modelMap: Record<string, string> = {
-      "claude-sonnet-4-5": "Claude Sonnet 4.5",
-      "claude-opus-4-5": "Claude Opus 4.5",
-      "claude-3-5-sonnet": "Claude 3.5 Sonnet",
-      "claude-3-opus": "Claude 3 Opus",
-      "claude-3-haiku": "Claude 3 Haiku",
-      "claude-haiku-4-5": "Claude Haiku 4.5",
-    };
-
-    return modelMap[cleaned] || model;
+    return displayModelName(model);
   }
 
   /**
