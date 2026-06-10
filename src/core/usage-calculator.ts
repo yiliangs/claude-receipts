@@ -12,6 +12,15 @@ interface ModelTotals {
 }
 
 /**
+ * Sentinel model id Claude Code writes for synthetic assistant messages
+ * (interrupts, API-error placeholders, subagent/sidechain artifacts). These
+ * are not a real billed model — including them pollutes the model breakdown
+ * with a phantom "<synthetic>" entry carrying no real usage. ccusage skips
+ * them too.
+ */
+const SYNTHETIC_MODEL = "<synthetic>";
+
+/**
  * Compute session usage and cost directly from the transcript JSONL.
  *
  * Replaces the ccusage subprocess: same shape on output, but reads the
@@ -34,6 +43,13 @@ export class UsageCalculator {
 
     const content = await readFile(expanded, "utf-8");
     const totalsByModel = new Map<string, ModelTotals>();
+    // One assistant turn with N content blocks (text + tool_use…) is written
+    // as N JSONL lines that share message.id + requestId and REPEAT the same
+    // usage object — the usage is for the whole API response, not per block.
+    // Summing every line multi-counts the same billing event (observed 3-5×,
+    // ~3× cost inflation overall). Dedupe by message.id+requestId, matching
+    // ccusage. Lines missing either id can't be deduped, so we count them.
+    const seenBillingKeys = new Set<string>();
 
     for (const line of content.split("\n")) {
       if (!line.trim()) continue;
@@ -48,6 +64,19 @@ export class UsageCalculator {
         continue;
 
       const model = msg.message.model;
+      // Synthetic messages aren't a real model — skip so they never reach the
+      // breakdown, the receipt line items, or the logbook `models` column.
+      if (model === SYNTHETIC_MODEL) continue;
+
+      // Skip repeated lines of the same multi-block turn (see seenBillingKeys).
+      const msgId = msg.message.id;
+      const reqId = msg.requestId;
+      if (msgId && reqId) {
+        const key = `${msgId}:${reqId}`;
+        if (seenBillingKeys.has(key)) continue;
+        seenBillingKeys.add(key);
+      }
+
       const u = msg.message.usage;
 
       const totals = totalsByModel.get(model) ?? {
