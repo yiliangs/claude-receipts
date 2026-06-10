@@ -103,6 +103,18 @@ export class GenerateCommand {
         `usage cost=${sessionData.totalCost.toFixed(6)} tokens=${sessionData.totalTokens} models=${(sessionData.modelsUsed || []).join(",")}`,
       );
 
+      // Zero-token sessions carry no signal — empty/aborted runs, headless
+      // probes, or sessions whose only assistant traffic was synthetic (now
+      // filtered out in usage-calculator). Skip them entirely: no receipt,
+      // no $0/0-token logbook row. Bail before parsing/rendering.
+      if (sessionData.totalTokens <= 0) {
+        spinner.info("No token usage — skipping receipt and logbook.");
+        this.logHookEvent(
+          `skip: zero-token session=${actualSessionId ?? "?"} — no receipt, no logbook row`,
+        );
+        return;
+      }
+
       // Parse transcript
       spinner.text = "Parsing transcript...";
       const transcriptData = await this.transcriptParser.parseTranscript(
