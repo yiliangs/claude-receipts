@@ -1,5 +1,6 @@
-import { readFile } from "fs/promises";
+import { readFile, readdir } from "fs/promises";
 import { existsSync } from "fs";
+import { join, dirname, basename } from "path";
 import { priceFor, normalizeModelId } from "./pricing.js";
 import type { TranscriptMessage } from "../types/transcript.js";
 import type { SessionUsage, ModelBreakdown } from "../types/session.js";
@@ -36,12 +37,12 @@ export class UsageCalculator {
     transcriptPath: string,
     sessionId: string,
   ): Promise<SessionUsage> {
-    const expanded = transcriptPath.replace(/^~/, process.env.HOME || "");
+    const home = process.env.HOME || process.env.USERPROFILE || "";
+    const expanded = transcriptPath.replace(/^~/, home);
     if (!existsSync(expanded)) {
       throw new Error(`Transcript file not found: ${transcriptPath}`);
     }
 
-    const content = await readFile(expanded, "utf-8");
     const totalsByModel = new Map<string, ModelTotals>();
     // One assistant turn with N content blocks (text + tool_use…) is written
     // as N JSONL lines that share message.id + requestId and REPEAT the same
@@ -49,47 +50,12 @@ export class UsageCalculator {
     // Summing every line multi-counts the same billing event (observed 3-5×,
     // ~3× cost inflation overall). Dedupe by message.id+requestId, matching
     // ccusage. Lines missing either id can't be deduped, so we count them.
+    // The set is shared across the main transcript and all subagent files —
+    // a billing event must count exactly once no matter where it appears.
     const seenBillingKeys = new Set<string>();
 
-    for (const line of content.split("\n")) {
-      if (!line.trim()) continue;
-      let msg: TranscriptMessage;
-      try {
-        msg = JSON.parse(line);
-      } catch {
-        continue;
-      }
-
-      if (msg.type !== "assistant" || !msg.message?.usage || !msg.message.model)
-        continue;
-
-      const model = msg.message.model;
-      // Synthetic messages aren't a real model — skip so they never reach the
-      // breakdown, the receipt line items, or the logbook `models` column.
-      if (model === SYNTHETIC_MODEL) continue;
-
-      // Skip repeated lines of the same multi-block turn (see seenBillingKeys).
-      const msgId = msg.message.id;
-      const reqId = msg.requestId;
-      if (msgId && reqId) {
-        const key = `${msgId}:${reqId}`;
-        if (seenBillingKeys.has(key)) continue;
-        seenBillingKeys.add(key);
-      }
-
-      const u = msg.message.usage;
-
-      const totals = totalsByModel.get(model) ?? {
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheCreationTokens: 0,
-        cacheReadTokens: 0,
-      };
-      totals.inputTokens += u.input_tokens || 0;
-      totals.outputTokens += u.output_tokens || 0;
-      totals.cacheCreationTokens += u.cache_creation_input_tokens || 0;
-      totals.cacheReadTokens += u.cache_read_input_tokens || 0;
-      totalsByModel.set(model, totals);
+    for (const file of await this.transcriptFiles(expanded, sessionId)) {
+      await this.accumulateFile(file, totalsByModel, seenBillingKeys);
     }
 
     const breakdowns: ModelBreakdown[] = [];
@@ -139,6 +105,114 @@ export class UsageCalculator {
   /** Models priced at $0 because we have no entry — generate.ts logs these. */
   getUnknownModels(): string[] {
     return [...this.unknownModels];
+  }
+
+  /**
+   * The main transcript plus any subagent transcripts. Claude Code writes
+   * Task/Agent and workflow subagent usage to sibling files at
+   * `<projectDir>/<session-id>/subagents/agent-*.jsonl` — their billing events
+   * never appear in the main JSONL, so skipping them undercounts every session
+   * that delegated work.
+   *
+   * The subagent directory is usually under the same project dir as the main
+   * transcript, but a run using isolation:'worktree' stores the parent
+   * transcript under the repo's project dir while its subagents land under the
+   * *worktree's* project dir — a sibling directory keyed to the worktree path.
+   * So we look both next to the transcript and across every project dir,
+   * matching on the session id. Missing directories just mean no subagents ran.
+   */
+  private async transcriptFiles(
+    mainPath: string,
+    sessionId: string,
+  ): Promise<string[]> {
+    const files = [mainPath];
+    const sid = sessionId || basename(mainPath).replace(/\.jsonl$/, "");
+
+    const projectDir = dirname(mainPath);
+    const candidateDirs = new Set<string>([projectDir]);
+    try {
+      // ~/.claude/projects — sibling project dirs (covers the worktree split).
+      const projectsRoot = dirname(projectDir);
+      for (const entry of await readdir(projectsRoot)) {
+        candidateDirs.add(join(projectsRoot, entry));
+      }
+    } catch {
+      // mainPath isn't under the standard projects root — co-located only.
+    }
+
+    for (const dir of candidateDirs) {
+      const subagentDir = join(dir, sid, "subagents");
+      try {
+        for (const entry of await readdir(subagentDir)) {
+          if (entry.endsWith(".jsonl")) files.push(join(subagentDir, entry));
+        }
+      } catch {
+        // no subagents directory here
+      }
+    }
+    return files;
+  }
+
+  /**
+   * Sum one JSONL file's billing events into totalsByModel, deduping against
+   * the shared seenBillingKeys set.
+   */
+  private async accumulateFile(
+    path: string,
+    totalsByModel: Map<string, ModelTotals>,
+    seenBillingKeys: Set<string>,
+  ): Promise<void> {
+    let content: string;
+    try {
+      content = await readFile(path, "utf-8");
+    } catch {
+      // Subagent file vanished or unreadable — skip rather than fail the receipt.
+      return;
+    }
+
+    for (const line of content.split("\n")) {
+      if (!line.trim()) continue;
+      let msg: TranscriptMessage;
+      try {
+        msg = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      if (msg.type !== "assistant" || !msg.message?.usage || !msg.message.model)
+        continue;
+
+      // Synthetic messages aren't a real model — skip so they never reach the
+      // breakdown, the receipt line items, or the logbook `models` column.
+      if (msg.message.model === SYNTHETIC_MODEL) continue;
+
+      // Aggregate by normalized alias so "claude-opus-4-8", a dated snapshot,
+      // and "claude-opus-4-8[1m]" land in one breakdown row, not three.
+      const model = normalizeModelId(msg.message.model);
+
+      // Skip repeated lines of the same multi-block turn (see seenBillingKeys).
+      const msgId = msg.message.id;
+      const reqId = msg.requestId;
+      if (msgId && reqId) {
+        const key = `${msgId}:${reqId}`;
+        if (seenBillingKeys.has(key)) continue;
+        seenBillingKeys.add(key);
+      }
+
+      const u = msg.message.usage;
+
+      const totals = totalsByModel.get(model) ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+      };
+      totals.inputTokens += u.input_tokens || 0;
+      totals.outputTokens += u.output_tokens || 0;
+      totals.cacheCreationTokens += u.cache_creation_input_tokens || 0;
+      totals.cacheReadTokens += u.cache_read_input_tokens || 0;
+      totalsByModel.set(model, totals);
+    }
   }
 
   private costFor(model: string, t: ModelTotals): number {

@@ -17,8 +17,9 @@ export class TranscriptParser {
     transcriptPath: string,
     fallbackId?: string,
   ): Promise<ParsedTranscript> {
-    // Expand ~ to home directory
-    const expandedPath = transcriptPath.replace(/^~/, process.env.HOME || "");
+    // Expand ~ to home directory (HOME is unset in some Windows shells)
+    const home = process.env.HOME || process.env.USERPROFILE || "";
+    const expandedPath = transcriptPath.replace(/^~/, home);
 
     if (!existsSync(expandedPath)) {
       throw new Error(`Transcript file not found: ${transcriptPath}`);
