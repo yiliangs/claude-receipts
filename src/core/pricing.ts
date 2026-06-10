@@ -25,19 +25,28 @@ export interface ModelPricing {
 }
 
 const PRICING: Record<string, ModelPricing> = {
-  // Current generation (May 2026)
+  // Current generation (June 2026)
+  // Fable 5 is the new top tier above Opus — $10/$50 per MTok.
+  "claude-fable-5":     { input: 10, output: 50, cacheWrite: 12.50, cacheRead: 1.00 },
   "claude-opus-4-8":    { input: 5,  output: 25, cacheWrite: 6.25, cacheRead: 0.50 },
   "claude-opus-4-7":    { input: 5,  output: 25, cacheWrite: 6.25, cacheRead: 0.50 },
   "claude-sonnet-4-6":  { input: 3,  output: 15, cacheWrite: 3.75, cacheRead: 0.30 },
   "claude-haiku-4-5":   { input: 1,  output: 5,  cacheWrite: 1.25, cacheRead: 0.10 },
 
-  // Prior generation — still appears in older transcripts
-  "claude-opus-4-6":    { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.50 },
-  "claude-opus-4-5":    { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.50 },
+  // Prior generation — still appears in older transcripts.
+  // Opus dropped to $5/$25 at the 4.5 launch (Nov 2025); only 4.1 and
+  // earlier carry the old $15/$75 rate.
+  "claude-opus-4-6":    { input: 5,  output: 25, cacheWrite: 6.25,  cacheRead: 0.50 },
+  "claude-opus-4-5":    { input: 5,  output: 25, cacheWrite: 6.25,  cacheRead: 0.50 },
   "claude-sonnet-4-5":  { input: 3,  output: 15, cacheWrite: 3.75,  cacheRead: 0.30 },
-  "claude-haiku-4":     { input: 1,  output: 5,  cacheWrite: 1.25,  cacheRead: 0.10 },
+  "claude-opus-4-1":    { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.50 },
+  "claude-opus-4-0":    { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.50 },
+  "claude-opus-4":      { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.50 },
+  "claude-sonnet-4-0":  { input: 3,  output: 15, cacheWrite: 3.75,  cacheRead: 0.30 },
+  "claude-sonnet-4":    { input: 3,  output: 15, cacheWrite: 3.75,  cacheRead: 0.30 },
 
   // Legacy
+  "claude-3-7-sonnet":  { input: 3,    output: 15,   cacheWrite: 3.75, cacheRead: 0.30 },
   "claude-3-5-sonnet":  { input: 3,    output: 15,   cacheWrite: 3.75, cacheRead: 0.30 },
   "claude-3-5-haiku":   { input: 0.80, output: 4,    cacheWrite: 1.00, cacheRead: 0.08 },
   "claude-3-opus":      { input: 15,   output: 75,   cacheWrite: 18.75, cacheRead: 1.50 },
@@ -45,13 +54,17 @@ const PRICING: Record<string, ModelPricing> = {
 };
 
 /**
- * Anthropic model IDs come in two flavors:
- *   - Alias:   "claude-opus-4-7"
- *   - Snapshot: "claude-opus-4-7-20260101"
- * Strip an 8-digit date suffix so both shapes resolve to the same entry.
+ * Anthropic model IDs come in three flavors:
+ *   - Alias:           "claude-opus-4-8"
+ *   - Snapshot:        "claude-haiku-4-5-20251001"
+ *   - Context variant: "claude-opus-4-8[1m]" (1M-context routing — same
+ *     standard pricing, no long-context premium)
+ * Strip the bracket suffix first, then an 8-digit date suffix, so every
+ * shape resolves to the same table entry. Without the bracket strip, [1m]
+ * sessions fail the lookup and silently bill at $0.
  */
 export function normalizeModelId(model: string): string {
-  return model.replace(/-\d{8}$/, "");
+  return model.replace(/\[[^\]]*\]$/, "").replace(/-\d{8}$/, "");
 }
 
 /**
