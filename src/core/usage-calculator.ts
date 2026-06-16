@@ -2,6 +2,7 @@ import { readFile, readdir } from "fs/promises";
 import { existsSync } from "fs";
 import { join, dirname, basename } from "path";
 import { priceFor, normalizeModelId } from "./pricing.js";
+import { expandHome } from "../utils/paths.js";
 import type { TranscriptMessage } from "../types/transcript.js";
 import type { SessionUsage, ModelBreakdown } from "../types/session.js";
 
@@ -37,8 +38,7 @@ export class UsageCalculator {
     transcriptPath: string,
     sessionId: string,
   ): Promise<SessionUsage> {
-    const home = process.env.HOME || process.env.USERPROFILE || "";
-    const expanded = transcriptPath.replace(/^~/, home);
+    const expanded = expandHome(transcriptPath);
     if (!existsSync(expanded)) {
       throw new Error(`Transcript file not found: ${transcriptPath}`);
     }

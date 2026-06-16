@@ -1,5 +1,6 @@
 import { readFile } from "fs/promises";
 import { existsSync } from "fs";
+import { expandHome } from "../utils/paths.js";
 import type {
   TranscriptMessage,
   ParsedTranscript,
@@ -17,9 +18,7 @@ export class TranscriptParser {
     transcriptPath: string,
     fallbackId?: string,
   ): Promise<ParsedTranscript> {
-    // Expand ~ to home directory (HOME is unset in some Windows shells)
-    const home = process.env.HOME || process.env.USERPROFILE || "";
-    const expandedPath = transcriptPath.replace(/^~/, home);
+    const expandedPath = expandHome(transcriptPath);
 
     if (!existsSync(expandedPath)) {
       throw new Error(`Transcript file not found: ${transcriptPath}`);
@@ -28,9 +27,21 @@ export class TranscriptParser {
     const content = await readFile(expandedPath, "utf-8");
     const lines = content.trim().split("\n");
 
-    const messages: TranscriptMessage[] = lines
-      .filter((line) => line.trim())
-      .map((line) => JSON.parse(line));
+    // Parse line by line, skipping any that don't parse. A transcript read
+    // while Claude Code is still writing it — or one left with a partial final
+    // line by a worker killed mid-write — has a malformed line; a bare
+    // .map(JSON.parse) would throw and lose the entire receipt AND the logbook
+    // row (usage is computed first, append happens after this). One bad line
+    // must not sink the session. Mirrors usage-calculator's per-line guard.
+    const messages: TranscriptMessage[] = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        messages.push(JSON.parse(line));
+      } catch {
+        // skip malformed / partially-written line
+      }
+    }
 
     // Extract session metadata
     const userMessages = messages.filter((m) => m.type === "user");
