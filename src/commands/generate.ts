@@ -18,6 +18,7 @@ import { ConfigManager } from "../core/config-manager.js";
 import { LogbookWriter } from "../core/logbook-writer.js";
 import { LocationDetector } from "../utils/location.js";
 import { WeatherFetcher } from "../utils/weather.js";
+import { homeDir, expandHome } from "../utils/paths.js";
 import type { SessionEndHookData } from "../types/session-hook.js";
 import type { ReceiptData } from "../core/receipt-generator.js";
 
@@ -354,8 +355,7 @@ export class GenerateCommand {
   receiptsRoot(): string {
     const primary = "H:/My Drive/claude-receipts";
     if (existsSync("H:/My Drive")) return primary;
-    const home = process.env.HOME || process.env.USERPROFILE || "";
-    return `${home}/.claude-receipts/projects`;
+    return `${homeDir()}/.claude-receipts/projects`;
   }
 
   /**
@@ -456,29 +456,6 @@ export class GenerateCommand {
   }
 
   /**
-   * Save receipt to a file
-   */
-  private async saveToFile(
-    receipt: string,
-    outputPath: string,
-    sessionId: string,
-  ): Promise<void> {
-    const { writeFile, mkdir } = await import("fs/promises");
-    const { dirname, resolve } = await import("path");
-
-    const resolvedPath = resolve(this.expandPath(outputPath));
-    const dir = dirname(resolvedPath);
-
-    // Ensure directory exists
-    await mkdir(dir, { recursive: true });
-
-    // Write receipt to file
-    await writeFile(resolvedPath, receipt, "utf-8");
-
-    console.log(chalk.green(`Receipt saved to: ${resolvedPath}`));
-  }
-
-  /**
    * Save HTML file
    */
   private async saveHtmlFile(html: string, outputPath: string): Promise<void> {
@@ -524,10 +501,6 @@ export class GenerateCommand {
    * Expand ~ to home directory
    */
   private expandPath(path: string): string {
-    if (path.startsWith("~/")) {
-      const home = process.env.HOME || process.env.USERPROFILE || "";
-      return path.replace(/^~/, home);
-    }
-    return path;
+    return expandHome(path);
   }
 }

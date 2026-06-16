@@ -6,6 +6,7 @@ import chalk from "chalk";
 import prompts from "prompts";
 import ora from "ora";
 import { ConfigManager } from "../core/config-manager.js";
+import { homeDir } from "../utils/paths.js";
 import type { ReceiptConfig } from "../types/config.js";
 
 interface ClaudeSettings {
@@ -30,8 +31,7 @@ export class SetupCommand {
   private settingsPath: string;
 
   constructor() {
-    const home = process.env.HOME || process.env.USERPROFILE || "";
-    this.settingsPath = join(home, ".claude", "settings.json");
+    this.settingsPath = join(homeDir(), ".claude", "settings.json");
   }
 
   async execute(options: SetupOptions): Promise<void> {
@@ -219,8 +219,7 @@ export class SetupCommand {
       "bin",
       "run-hook.sh",
     );
-    const home = process.env.HOME || process.env.USERPROFILE || "";
-    const homeNorm = home.replace(/\\/g, "/");
+    const homeNorm = homeDir().replace(/\\/g, "/");
     const normalized = wrapperPath.replace(/\\/g, "/");
     const relPath =
       homeNorm && normalized.toLowerCase().startsWith(homeNorm.toLowerCase())

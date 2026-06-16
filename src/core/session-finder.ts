@@ -1,5 +1,6 @@
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
+import { homeDir } from "../utils/paths.js";
 
 export interface FoundSession {
   sessionId: string;
@@ -20,8 +21,7 @@ export class SessionFinder {
   private root: string;
 
   constructor() {
-    const home = process.env.HOME || process.env.USERPROFILE || "";
-    this.root = join(home, ".claude", "projects");
+    this.root = join(homeDir(), ".claude", "projects");
   }
 
   /**
