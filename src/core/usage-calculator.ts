@@ -109,10 +109,18 @@ export class UsageCalculator {
 
   /**
    * The main transcript plus any subagent transcripts. Claude Code writes
-   * Task/Agent and workflow subagent usage to sibling files at
-   * `<projectDir>/<session-id>/subagents/agent-*.jsonl` — their billing events
-   * never appear in the main JSONL, so skipping them undercounts every session
-   * that delegated work.
+   * Task/Agent and workflow subagent usage to files under
+   * `<projectDir>/<session-id>/subagents/` — their billing events never appear
+   * in the main JSONL, so skipping them undercounts every session that
+   * delegated work.
+   *
+   * The layout is NOT flat. Plain Task/Agent runs land directly in
+   * `subagents/agent-*.jsonl`, but Workflow-spawned agents are nested another
+   * two levels deep under `subagents/workflows/wf_<id>/agent-*.jsonl`. A
+   * non-recursive scan sees only the flat case and silently drops every
+   * workflow agent — on a heavy ultracode/workflow session that's ~half the
+   * real spend (observed: a $223 session billed at $114). So we walk the
+   * subagents tree recursively and take every *.jsonl at any depth.
    *
    * The subagent directory is usually under the same project dir as the main
    * transcript, but a run using isolation:'worktree' stores the parent
@@ -143,7 +151,10 @@ export class UsageCalculator {
     for (const dir of candidateDirs) {
       const subagentDir = join(dir, sid, "subagents");
       try {
-        for (const entry of await readdir(subagentDir)) {
+        // Recursive: workflow agents nest under subagents/workflows/wf_*/.
+        // readdir returns paths relative to subagentDir; directory entries
+        // (e.g. "workflows") don't end in .jsonl, so they're skipped.
+        for (const entry of await readdir(subagentDir, { recursive: true })) {
           if (entry.endsWith(".jsonl")) files.push(join(subagentDir, entry));
         }
       } catch {
