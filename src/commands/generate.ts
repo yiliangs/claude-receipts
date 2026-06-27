@@ -268,7 +268,7 @@ export class GenerateCommand {
     try {
       const { stdout } = await execAsync(
         `git -C "${cwd}" branch --show-current`,
-        { timeout: 1500 },
+        { timeout: 1500, windowsHide: true },
       );
       const branch = stdout.trim();
       return branch || null;
@@ -482,14 +482,15 @@ export class GenerateCommand {
 
     try {
       if (platform === "darwin") {
-        // macOS
-        await execAsync(`open "${filePath}"`);
+        await execAsync(`open "${filePath}"`, { windowsHide: true });
       } else if (platform === "win32") {
-        // Windows
-        await execAsync(`start "" "${filePath}"`);
+        // windowsHide: the worker runs detached with no console of its own, so
+        // exec()'s default (windowsHide: false) makes Windows create a fresh
+        // console for the cmd.exe that runs `start`, which flashes a terminal
+        // window right before Chrome opens.
+        await execAsync(`start "" "${filePath}"`, { windowsHide: true });
       } else {
-        // Linux
-        await execAsync(`xdg-open "${filePath}"`);
+        await execAsync(`xdg-open "${filePath}"`, { windowsHide: true });
       }
     } catch (error) {
       // Silently fail - file is still saved
