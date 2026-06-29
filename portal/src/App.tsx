@@ -76,6 +76,32 @@ export function App() {
       .catch((e) => setLoadErr(e.message || String(e)))
   }, [])
 
+  // Auto-reload when the snapshot on disk changes. The launcher re-runs
+  // build-data and then `vite --open` re-focuses this (already-open) tab WITHOUT
+  // reloading it — so loadData()'s once-only fetch never re-runs and you keep
+  // seeing stale numbers. On every focus/visibility regain we re-check meta.json
+  // (tiny, no-store) and hard-reload only when generatedAt actually moved.
+  useEffect(() => {
+    if (!ready) return
+    const base = import.meta.env.BASE_URL || '/'
+    const loadedAt = LH.meta?.generatedAt || null
+    const check = async () => {
+      if (document.hidden) return
+      try {
+        const m = await fetch(base + 'data/meta.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null))
+        if (m && m.generatedAt && m.generatedAt !== loadedAt) location.reload()
+      } catch {
+        /* offline / server down — keep showing what we have */
+      }
+    }
+    window.addEventListener('focus', check)
+    document.addEventListener('visibilitychange', check)
+    return () => {
+      window.removeEventListener('focus', check)
+      document.removeEventListener('visibilitychange', check)
+    }
+  }, [ready])
+
   const set = (patch: any) => setFilters((f) => ({ ...f, ...patch }))
   const toggleFilter = (dim: string, value: string) =>
     setFilters((f: any) => {
