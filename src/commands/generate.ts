@@ -158,10 +158,21 @@ export class GenerateCommand {
 
       const receipt = this.receiptGenerator.generateReceipt(receiptData);
 
-      // Append to the master logbook before rendering outputs. The logbook
-      // captures every session even when downstream renderers fail.
-      await this.logbookWriter.append(this.receiptsRoot(), receiptData);
-      this.logHookEvent(`logbook appended to ${this.receiptsRoot()}/logbook.csv`);
+      // Write the session's logbook shard before rendering outputs, so the
+      // logbook captures every session even when downstream renderers fail.
+      // Wrapped so a logbook failure never blocks the receipt — but unlike the
+      // old writer, the failure is logged instead of silently swallowed.
+      try {
+        const shardPath = await this.logbookWriter.append(
+          this.receiptsRoot(),
+          receiptData,
+        );
+        this.logHookEvent(`logbook shard written: ${shardPath}`);
+      } catch (err) {
+        this.logHookEvent(
+          `logbook write FAILED: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
 
       spinner.succeed("Receipt generated!");
 

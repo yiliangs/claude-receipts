@@ -40,7 +40,7 @@ function applyPrev(f: any) {
   const useP = f.projects.size, useM = f.machines.size, useF = f.models.size
   const out: any[] = []
   for (const s of LH.SESSIONS) {
-    if (s.start < win.prevStart || s.start >= win.prevEnd) continue
+    if (s.t < win.prevStart || s.t >= win.prevEnd) continue
     if (useP && !f.projects.has(s.project)) continue
     if (useM && !f.machines.has(s.machine)) continue
     if (useF && !s.models.some((m: string) => f.models.has(LHA.famOf(m)))) continue
@@ -75,6 +75,32 @@ export function App() {
       .then(() => setReady(true))
       .catch((e) => setLoadErr(e.message || String(e)))
   }, [])
+
+  // Auto-reload when the snapshot on disk changes. The launcher re-runs
+  // build-data and then `vite --open` re-focuses this (already-open) tab WITHOUT
+  // reloading it — so loadData()'s once-only fetch never re-runs and you keep
+  // seeing stale numbers. On every focus/visibility regain we re-check meta.json
+  // (tiny, no-store) and hard-reload only when generatedAt actually moved.
+  useEffect(() => {
+    if (!ready) return
+    const base = import.meta.env.BASE_URL || '/'
+    const loadedAt = LH.meta?.generatedAt || null
+    const check = async () => {
+      if (document.hidden) return
+      try {
+        const m = await fetch(base + 'data/meta.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null))
+        if (m && m.generatedAt && m.generatedAt !== loadedAt) location.reload()
+      } catch {
+        /* offline / server down — keep showing what we have */
+      }
+    }
+    window.addEventListener('focus', check)
+    document.addEventListener('visibilitychange', check)
+    return () => {
+      window.removeEventListener('focus', check)
+      document.removeEventListener('visibilitychange', check)
+    }
+  }, [ready])
 
   const set = (patch: any) => setFilters((f) => ({ ...f, ...patch }))
   const toggleFilter = (dim: string, value: string) =>

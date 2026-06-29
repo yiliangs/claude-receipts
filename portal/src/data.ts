@@ -69,6 +69,7 @@ const DAY = 86400000
 export interface LSession extends Omit<RawSession, 'start' | 'end'> {
   start: number
   end: number | null
+  t: number // billing time = end (fallback start); ALL window/bucket math uses this
   primaryModel: string
   fam: string // primary model family key
   _i: number
@@ -177,10 +178,13 @@ export async function loadData(): Promise<void> {
 
   const sessions: LSession[] = (sessRaw as RawSession[]).map((s, i) => {
     const primaryModel = s.models[0] || ''
+    const startMs = Date.parse(s.start)
+    const endMs = s.end ? Date.parse(s.end) : null
     return {
       ...s,
-      start: Date.parse(s.start),
-      end: s.end ? Date.parse(s.end) : null,
+      start: startMs,
+      end: endMs,
+      t: endMs ?? startMs, // spend lands on when the session ENDED
       primaryModel,
       fam: familyOf(primaryModel),
       _i: i,
