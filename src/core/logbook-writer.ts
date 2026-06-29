@@ -1,155 +1,115 @@
-import { existsSync, mkdirSync } from "fs";
-import { appendFile, writeFile, readFile, open } from "fs/promises";
-import { dirname, join } from "path";
+import { mkdirSync } from "fs";
+import { writeFile, readFile } from "fs/promises";
+import { join } from "path";
 import { hostname } from "os";
 import { formatDuration } from "../utils/formatting.js";
 import type { ReceiptData } from "./receipt-generator.js";
 
-const HEADER = [
-  "timestamp",
-  "session_slug",
-  "session_id",
-  "project",
-  "branch",
-  "cwd",
-  "machine",
-  "location",
-  "start_time",
-  "end_time",
-  "duration_seconds",
-  "duration_human",
-  "input_tokens",
-  "output_tokens",
-  "cache_creation_tokens",
-  "cache_read_tokens",
-  "total_tokens",
-  "total_cost_usd",
-  "models",
-];
+/**
+ * One column-named record per session, the JSON shard's shape. Field names
+ * mirror the legacy logbook.csv header so the portal's build-data can normalize
+ * CSV rows and shards through one code path. `models` is a real array here
+ * (the CSV packed them into a ";"-joined string).
+ */
+export interface LogbookRecord {
+  timestamp: string;
+  session_slug: string;
+  session_id: string;
+  project: string;
+  branch: string;
+  cwd: string;
+  machine: string;
+  location: string;
+  start_time: string;
+  end_time: string;
+  duration_seconds: number;
+  duration_human: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  models: string[];
+}
 
+/**
+ * Records one session per JSON file under <root>/logbook.d/.
+ *
+ * Why per-session files instead of one append-only logbook.csv: the logbook
+ * lives on Google Drive File Stream and is shared across machines. Appending
+ * rewrites the whole shared file, and Drive resolves any version skew with
+ * last-writer-wins — silently dropping rows that lose the race (receipts, being
+ * unique new files, never conflicted, which is why they always survived while
+ * logbook rows sporadically vanished). Giving every session its own uniquely
+ * named file removes the conflict surface entirely.
+ *
+ * A resumed session fires SessionEnd more than once with the same id and grown
+ * usage; re-writing the same-named shard keeps one record holding the latest
+ * figures. The portal's build-data merges these shards with the legacy CSV.
+ */
 export class LogbookWriter {
+  static readonly SHARD_DIR = "logbook.d";
+
   /**
-   * Record one row per session in <root>/logbook.csv. Writes the header on
-   * first creation. If a row with this session_id already exists it is
-   * rewritten in place rather than appended — a resumed session fires
-   * SessionEnd more than once, and each firing carries the same id with grown
-   * usage; one row per session, holding the latest figures, is what we want.
-   * Failures are swallowed — the logbook is best-effort and must never block
-   * receipt generation.
+   * Write this session's shard and return its path. Throws on failure — the
+   * old single CSV writer swallowed every error, which is exactly how the data
+   * loss stayed invisible. The caller logs the outcome and must not let a
+   * logbook failure block receipt rendering.
    */
-  async append(root: string, data: ReceiptData): Promise<void> {
-    try {
-      const path = join(root, "logbook.csv");
-      mkdirSync(dirname(path), { recursive: true });
+  async append(root: string, data: ReceiptData): Promise<string> {
+    const dir = join(root, LogbookWriter.SHARD_DIR);
+    mkdirSync(dir, { recursive: true });
 
-      const csvRow = this.buildRow(data).map(this.escapeCell).join(",");
-      const sessionId = data.sessionData.sessionId || "";
+    const record = this.buildRecord(data);
+    const base =
+      record.session_id ||
+      `${record.session_slug || "session"}-${record.end_time}`;
+    const name = base.replace(/[^A-Za-z0-9._-]/g, "_");
+    const path = join(dir, `${name}.json`);
 
-      if (!existsSync(path)) {
-        await writeFile(path, HEADER.join(",") + "\n" + csvRow + "\n", "utf-8");
-        return;
-      }
+    await writeFile(path, JSON.stringify(record, null, 2), "utf-8");
 
-      // Replace an existing row for the same session_id (de-dupe resumed
-      // sessions) instead of appending a second one.
-      if (sessionId) {
-        const existing = await readFile(path, "utf-8");
-        const lines = existing.split("\n");
-        const idx = lines.findIndex(
-          (l) => this.sessionIdOf(l) === sessionId,
-        );
-        if (idx >= 0) {
-          lines[idx] = csvRow;
-          let out = lines.join("\n");
-          if (!out.endsWith("\n")) out += "\n";
-          await writeFile(path, out, "utf-8");
-          return;
-        }
-      }
-
-      // New session — append. Don't trust the file to be newline-terminated:
-      // an external editor (Excel / Sheets re-saving the CSV on Drive) or a
-      // worker killed mid-append can leave the last line without its "\n",
-      // which would glue the new row on. Prepend "\n" when it's missing.
-      const lead = (await this.endsWithNewline(path)) ? "" : "\n";
-      await appendFile(path, lead + csvRow + "\n", "utf-8");
-    } catch {
-      // Logbook is auxiliary — never break the hook.
+    // Read the bytes back: Drive can accept a write and later revert it, and a
+    // unique new file is the case that has always persisted, so a mismatch here
+    // is a real red flag worth surfacing rather than trusting the write blind.
+    const back = JSON.parse(await readFile(path, "utf-8")) as LogbookRecord;
+    if (back.session_id !== record.session_id) {
+      throw new Error(`shard verify mismatch for ${name}.json`);
     }
+    return path;
   }
 
-  /**
-   * session_id (3rd column) of a raw CSV line, or "" for the header / blank
-   * lines. The first three columns (timestamp, slug, session_id) never contain
-   * commas, so a plain split is safe even though later cells (e.g. a quoted
-   * "City, ST" location) can.
-   */
-  private sessionIdOf(line: string): string {
-    if (!line) return "";
-    const parts = line.split(",");
-    return parts.length >= 3 ? parts[2] : "";
-  }
-
-  /**
-   * True if the file is empty or its final byte is "\n" (so a plain append
-   * lands on a fresh row). Reads only the last byte — the logbook grows to
-   * many rows and is never read whole here. CRLF files still end in "\n", so
-   * a single-byte check is sufficient.
-   */
-  private async endsWithNewline(path: string): Promise<boolean> {
-    const fh = await open(path, "r");
-    try {
-      const { size } = await fh.stat();
-      if (size === 0) return true;
-      const buf = Buffer.alloc(1);
-      await fh.read(buf, 0, 1, size - 1);
-      return buf[0] === 0x0a; // "\n"
-    } finally {
-      await fh.close();
-    }
-  }
-
-  private buildRow(data: ReceiptData): string[] {
+  private buildRecord(data: ReceiptData): LogbookRecord {
     const { sessionData, transcriptData, location } = data;
     const durationMs =
       transcriptData.endTime.getTime() - transcriptData.startTime.getTime();
     const durationSec = Math.max(0, Math.floor(durationMs / 1000));
+    const models = (sessionData.modelBreakdowns || []).map((m) => m.modelName);
 
-    const models = (sessionData.modelBreakdowns || [])
-      .map((m) => m.modelName)
-      .join(";");
-
-    return [
-      transcriptData.endTime.toISOString(),
-      transcriptData.sessionSlug || "",
-      sessionData.sessionId || "",
-      transcriptData.projectName || "",
-      transcriptData.gitBranch || "",
-      transcriptData.cwd || "",
-      hostname(),
-      location || "",
-      transcriptData.startTime.toISOString(),
-      transcriptData.endTime.toISOString(),
-      String(durationSec),
-      formatDuration(transcriptData.startTime, transcriptData.endTime),
-      String(sessionData.inputTokens ?? 0),
-      String(sessionData.outputTokens ?? 0),
-      String(sessionData.cacheCreationTokens ?? 0),
-      String(sessionData.cacheReadTokens ?? 0),
-      String(sessionData.totalTokens ?? 0),
-      (sessionData.totalCost ?? 0).toFixed(6),
+    return {
+      timestamp: transcriptData.endTime.toISOString(),
+      session_slug: transcriptData.sessionSlug || "",
+      session_id: sessionData.sessionId || "",
+      project: transcriptData.projectName || "",
+      branch: transcriptData.gitBranch || "",
+      cwd: transcriptData.cwd || "",
+      machine: hostname(),
+      location: location || "",
+      start_time: transcriptData.startTime.toISOString(),
+      end_time: transcriptData.endTime.toISOString(),
+      duration_seconds: durationSec,
+      duration_human: formatDuration(
+        transcriptData.startTime,
+        transcriptData.endTime,
+      ),
+      input_tokens: sessionData.inputTokens ?? 0,
+      output_tokens: sessionData.outputTokens ?? 0,
+      cache_creation_tokens: sessionData.cacheCreationTokens ?? 0,
+      cache_read_tokens: sessionData.cacheReadTokens ?? 0,
+      total_tokens: sessionData.totalTokens ?? 0,
+      total_cost_usd: Number((sessionData.totalCost ?? 0).toFixed(6)),
       models,
-    ];
-  }
-
-  /**
-   * CSV escape per RFC 4180: wrap in quotes when the value contains a comma,
-   * quote, or newline; double internal quotes.
-   */
-  private escapeCell(value: string): string {
-    if (/[",\n\r]/.test(value)) {
-      return `"${value.replace(/"/g, '""')}"`;
-    }
-    return value;
+    };
   }
 }
