@@ -40,7 +40,7 @@ function applyPrev(f: any) {
   const useP = f.projects.size, useM = f.machines.size, useF = f.models.size
   const out: any[] = []
   for (const s of LH.SESSIONS) {
-    if (s.start < win.prevStart || s.start >= win.prevEnd) continue
+    if (s.t < win.prevStart || s.t >= win.prevEnd) continue
     if (useP && !f.projects.has(s.project)) continue
     if (useM && !f.machines.has(s.machine)) continue
     if (useF && !s.models.some((m: string) => f.models.has(LHA.famOf(m)))) continue

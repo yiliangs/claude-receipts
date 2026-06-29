@@ -15,7 +15,11 @@ function windowFor(range: string) {
   const DAY = LH.DAY
   const END = LH.BUILD.getTime()
   const days = range === '7d' ? 7 : range === '14d' ? 14 : range === '30d' ? 30 : range === '90d' ? 90 : LH.SPAN + 1
-  const start = END - days * DAY
+  // Calendar window keyed on END time, anchored to UTC dates so this matches the
+  // terminal statusline (which slices the UTC ISO timestamp) to the dollar.
+  // start = UTC midnight of (today − days) ≡ `date -u -d "<days> days ago"`.
+  const c = new Date(END - days * DAY)
+  const start = Date.UTC(c.getUTCFullYear(), c.getUTCMonth(), c.getUTCDate())
   const unit = days <= 92 ? 'day' : 'week'
   return { days, start, end: END, prevStart: start - days * DAY, prevEnd: start, unit }
 }
@@ -29,7 +33,7 @@ function applyFilters(f: any) {
   const S = LH.SESSIONS
   for (let i = 0; i < S.length; i++) {
     const s = S[i]
-    if (s.start < win.start || s.start > win.end) continue
+    if (s.t < win.start || s.t > win.end) continue
     if (useP && !f.projects.has(s.project)) continue
     if (useM && !f.machines.has(s.machine)) continue
     if (useF && !s.models.some((m: string) => f.models.has(famOf(m)))) continue
@@ -121,7 +125,7 @@ function costOverTime(sessions: any[], bks: any[]) {
   const byKey: any = {}
   series.forEach((s) => (byKey[s.key] = s))
   for (const s of sessions) {
-    const bi = bucketIndex(bks, s.start)
+    const bi = bucketIndex(bks, s.t)
     if (bi < 0) continue
     byKey[s.fam].values[bi] += s.cost
   }
@@ -134,7 +138,7 @@ function tokensOverTime(sessions: any[], bks: any[]) {
   const TOK = LH.TOKENS
   const series = TOK.map((t) => ({ key: t.key, label: t.label, color: t.color, border: t.border, values: bks.map(() => 0) }))
   for (const s of sessions) {
-    const bi = bucketIndex(bks, s.start)
+    const bi = bucketIndex(bks, s.t)
     if (bi < 0) continue
     series[0].values[bi] += s.input
     series[1].values[bi] += s.output
@@ -148,7 +152,7 @@ function tokensOverTime(sessions: any[], bks: any[]) {
 function scalarSeries(sessions: any[], bks: any[], pick: (s: any) => number) {
   const v = bks.map(() => 0)
   for (const s of sessions) {
-    const bi = bucketIndex(bks, s.start)
+    const bi = bucketIndex(bks, s.t)
     if (bi >= 0) v[bi] += pick(s)
   }
   return v
@@ -164,7 +168,7 @@ function cumulative(arr: number[]) {
 function cacheHitSeries(sessions: any[], bks: any[]) {
   const read = bks.map(() => 0), tot = bks.map(() => 0)
   for (const s of sessions) {
-    const bi = bucketIndex(bks, s.start)
+    const bi = bucketIndex(bks, s.t)
     if (bi >= 0) { read[bi] += s.cacheRead; tot[bi] += s.totalTokens }
   }
   return bks.map((_, i) => (tot[i] ? read[i] / tot[i] : null))
