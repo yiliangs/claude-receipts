@@ -1,10 +1,10 @@
 # Claude Receipts — Usage Portal
 
 A local, single-user analytics dashboard for your Claude Code spend. It loads
-the shared `logbook.csv` (one row per session, written by the SessionEnd hook)
-into memory once and makes every interaction — filter, cross-filter, sort,
-drill-in — instant. Dark "ledger" visual language; session drill-ins render as
-paper thermal receipts.
+the shared logbook shards (`logbook.d/` — one JSON file per session, written by
+the SessionEnd hook) into memory once and makes every interaction — filter,
+cross-filter, sort, drill-in — instant. Dark "ledger" visual language; session
+drill-ins render as paper thermal receipts.
 
 Five views share one cross-filter state: **Overview**, **Spend**, **Tokens**,
 **Projects**, **Sessions**. Click any project / model / machine / session to
@@ -13,8 +13,8 @@ filter the whole portal.
 ## How it works
 
 ```
-H:\My Drive\claude-receipts\logbook.csv
-        |  scripts/build-data.mjs  (CSV -> clean JSON)
+H:\My Drive\claude-receipts\logbook.d\*.json   (one shard per session)
+        |  scripts/build-data.mjs  (shards -> clean JSON)
         v
 portal/public/data/{sessions.json, meta.json}
         |
@@ -27,8 +27,15 @@ browser
 - `sessions.json` — one normalized record per session (scalars + token columns).
 - `meta.json` — build time + headline counts (the header freshness pill).
 
+`logbook.d/` is the **single source of truth** — shard filename = session id,
+so a session cannot exist twice, and the terminal statusline sums the same
+directory with the same end-time/UTC-window rule (the two displays agree by
+design). The legacy `logbook.csv` was folded in on 2026-07-04
+(`scripts/migrate-csv-to-shards.mjs`); if a live CSV reappears next to the
+shard dir the builder warns and ignores it.
+
 The data builder is wired into `predev` / `build`, so the JSON is rebuilt from
-the CSV every time you start the dev server or produce a production bundle.
+the shards every time you start the dev server or produce a production bundle.
 
 ## Run
 
@@ -48,14 +55,15 @@ npm run preview  # serve the built bundle at http://localhost:4173
 
 ## Refresh the data
 
-The CSV is re-read on every `npm run dev`. To refresh while the dev server is
-already running, re-run the builder and reload the browser tab:
+The shards are re-read on every `npm run dev`. To refresh while the dev server
+is already running, re-run the builder and reload the browser tab:
 
 ```bash
 npm run data
 ```
 
-Point at a different logbook without editing source:
+Point at a different logbook without editing source (the path is an anchor —
+its sibling `logbook.d/` is what gets read):
 
 ```bash
 # PowerShell
@@ -64,7 +72,7 @@ $env:CLAUDE_RECEIPTS_LOGBOOK = "D:\path\to\logbook.csv"; npm run data
 node scripts/build-data.mjs "D:\path\to\logbook.csv"
 ```
 
-If the source CSV is unreachable (e.g. the Drive isn't mounted), the builder
+If the shard dir is unreachable (e.g. the Drive isn't mounted), the builder
 keeps the existing snapshot in `public/data` so the portal still runs.
 
 ## Notes on the numbers
@@ -82,7 +90,7 @@ keeps the existing snapshot in `public/data` so the portal still runs.
 
 | File | Role |
 |---|---|
-| `scripts/build-data.mjs` | CSV → `public/data/*.json` (Node, build step) |
+| `scripts/build-data.mjs` | `logbook.d/` shards → `public/data/*.json` (Node, build step) |
 | `src/data.ts` | artifact loader + `LH` singleton + formatters |
 | `src/agg.ts` | pure aggregation over the in-memory session array |
 | `src/charts.tsx` | hand-built SVG charts (no chart lib) |

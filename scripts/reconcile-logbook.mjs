@@ -1,5 +1,12 @@
 #!/usr/bin/env node
 /**
+ * RETIRED 2026-07-04: this script edits the legacy logbook.csv, which was
+ * folded into logbook.d/ (migrate-csv-to-shards.mjs) and renamed to
+ * logbook.csv.migrated-2026-07-04.bak — so it now exits with "logbook not
+ * found", by design. To retro-correct sessions today, use bulk-regen.mjs /
+ * regen-session.mjs: they recompute from transcripts and overwrite the
+ * session's shard in place.
+ *
  * reconcile-logbook.mjs — retroactively correct existing logbook rows whose
  * transcripts are still on disk.
  *

@@ -26,8 +26,9 @@ npm run dev      # builds the data, then opens http://localhost:4179
 ```
 
 On Windows you can just double-click `portal/Claude-Receipts.bat`. The portal reads
-the logbook written by the hook; point it at a different copy with
-`CLAUDE_RECEIPTS_LOGBOOK=/path/to/logbook.csv`.
+the per-session logbook shards (`logbook.d/`) written by the hook; point it at a
+different copy with `CLAUDE_RECEIPTS_LOGBOOK=/path/to/logbook.csv` (an anchor
+path — its sibling `logbook.d/` is what gets read).
 
 ## Installation
 

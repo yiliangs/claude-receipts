@@ -9,21 +9,18 @@ import { existsSync } from "fs";
 
 const HOME = process.env.USERPROFILE || process.env.HOME || "";
 const PROJECTS = join(HOME, ".claude", "projects");
-const LOGBOOK = "H:/My Drive/claude-receipts/logbook.csv";
+const SHARD_DIR = "H:/My Drive/claude-receipts/logbook.d";
 const REGEN = join(process.cwd(), "scripts", "regen-session.mjs");
 const CURRENT_SESSION = process.argv[2] || ""; // optional skip
 const MIN_AGE_SEC = 120; // skip transcripts modified in the last 2 min
 
 async function loadRecordedIds() {
-  if (!existsSync(LOGBOOK)) return new Set();
-  const content = await readFile(LOGBOOK, "utf-8");
-  const lines = content.split(/\r?\n/).filter(Boolean);
-  const header = lines[0].split(",");
-  const idx = header.indexOf("session_id");
+  // logbook.d/ is the single source of truth; shard filename = session_id
+  // (the legacy logbook.csv was folded in by migrate-csv-to-shards.mjs).
+  if (!existsSync(SHARD_DIR)) return new Set();
   const ids = new Set();
-  for (let i = 1; i < lines.length; i++) {
-    const cells = lines[i].split(","); // session_id has no commas — safe
-    if (cells[idx]) ids.add(cells[idx]);
+  for (const f of await readdir(SHARD_DIR)) {
+    if (extname(f) === ".json") ids.add(basename(f, ".json"));
   }
   return ids;
 }

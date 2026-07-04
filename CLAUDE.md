@@ -50,7 +50,7 @@ UsageCalculator (reads JSONL, prices via pricing.ts)
   ↓
 ReceiptGenerator (text) + HtmlRenderer (styled HTML)
   ↓
-LogbookWriter appends a row to logbook.csv
+LogbookWriter writes one JSON shard to logbook.d/<session_id>.json
   ↓
 Save to H:/My Drive/claude-receipts/[slug-timestamp].html (or fallback)
   + open browser (hook mode only)
@@ -75,7 +75,7 @@ subprocess, no indexer-lag retries. Hook finishes in ~1s on the fast path.
 - `transcript-parser.ts` - Parses `~/.claude/projects/[path].jsonl` for session metadata (slug, timestamps, message counts)
 - `receipt-generator.ts` - Creates ASCII text receipt with Claude logo, location, costs
 - `html-renderer.ts` - Generates standalone HTML with embedded CSS (thermal printer aesthetic)
-- `logbook-writer.ts` - Appends one row per session to `<receiptsRoot>/logbook.csv` for cross-session summarization
+- `logbook-writer.ts` - Writes one JSON shard per session to `<receiptsRoot>/logbook.d/<session_id>.json`. That directory is the **single source of truth** for spend: the portal and the terminal statusline both sum it with the same end-time/UTC-window rule, so their totals agree by design. The legacy shared `logbook.csv` was folded in on 2026-07-04 (`scripts/migrate-csv-to-shards.mjs`) — never revive a second source; consumers do not merge.
 - `config-manager.ts` - Handles `~/.claude-receipts.config.json` I/O
 
 **Utils** (`src/utils/`)

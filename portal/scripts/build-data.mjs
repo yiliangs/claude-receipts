@@ -1,26 +1,30 @@
 /* ============================================================
    claude-receipts portal — data builder
-   Merges the session logbook into the clean artifacts the portal loads:
+   Normalizes the session logbook into the clean artifacts the portal loads:
      public/data/sessions.json  — one normalized record per session
      public/data/meta.json      — build time + headline counts (freshness pill)
 
-   Two sources, merged by session_id (shard wins on a tie):
-     1. logbook.d/<id>.json   — one JSON file per session (current mechanism)
-     2. logbook.csv           — legacy single append-only file (historical rows)
+   SINGLE source of truth: logbook.d/<session_id>.json — one JSON file per
+   session, filename keyed by session id, so a session structurally cannot
+   exist twice. Every consumer (this builder, the terminal statusline) does a
+   plain sum over the same directory — no merge rules to drift apart.
 
-   Per-session shards exist because appending to one shared logbook.csv on
-   Google Drive File Stream silently dropped rows (last-writer-wins on the whole
-   file). Unique-named shards never conflict. The CSV is kept read-only for the
-   history written before the switch.
+   History: sessions used to append to one shared logbook.csv, but Google
+   Drive File Stream resolved concurrent writes last-writer-wins and silently
+   dropped rows — hence per-session shards. The CSV era rows were folded into
+   logbook.d/ on 2026-07-04 (scripts/migrate-csv-to-shards.mjs) and the CSV
+   retired to logbook.csv.migrated-2026-07-04.bak. A live logbook.csv found
+   next to the shard dir is IGNORED with a loud warning: two sources is the
+   exact design this migration removed.
 
-   Source path resolution (first hit wins) — points at the CSV; the shard dir is
-   its sibling logbook.d/:
+   Source path resolution (first hit wins) — the legacy CSV path anchors the
+   location; only its sibling logbook.d/ is read:
      1. argv[2]
      2. $CLAUDE_RECEIPTS_LOGBOOK
      3. H:\My Drive\claude-receipts\logbook.csv   (the canonical Drive copy)
 
-   If neither source is reachable, the existing snapshot in public/data is left
-   untouched so the portal still builds offline.
+   If the shard dir is unreachable, the existing snapshot in public/data is
+   left untouched so the portal still builds offline.
    ============================================================ */
 import {
   readFileSync,
@@ -38,22 +42,6 @@ const DEFAULT_SRC = "H:/My Drive/claude-receipts/logbook.csv";
 
 const src = process.argv[2] || process.env.CLAUDE_RECEIPTS_LOGBOOK || DEFAULT_SRC;
 const SHARD_DIR = resolve(dirname(src), "logbook.d");
-
-// ---- RFC-4180-ish CSV line parser (honors quotes + escaped "") ----
-function parseLine(line) {
-  const out = [];
-  let cur = "", q = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (c === '"') {
-      if (q && line[i + 1] === '"') { cur += '"'; i++; }
-      else q = !q;
-    } else if (c === "," && !q) { out.push(cur); cur = ""; }
-    else cur += c;
-  }
-  out.push(cur);
-  return out;
-}
 
 const num = (v) => {
   const n = Number(typeof v === "string" ? v.trim() : v);
@@ -97,11 +85,15 @@ function toSession(rec) {
 }
 
 function main() {
-  const haveCsv = existsSync(src);
-  const haveShards = existsSync(SHARD_DIR);
+  if (existsSync(src)) {
+    console.warn(
+      `[build-data] WARNING: legacy ${src} exists but is IGNORED — logbook.d/ is the single ` +
+        `source of truth (migrated 2026-07-04). Fold it in with scripts/migrate-csv-to-shards.mjs.`,
+    );
+  }
 
-  if (!haveCsv && !haveShards) {
-    console.warn(`[build-data] no source: ${src} (and no ${SHARD_DIR})`);
+  if (!existsSync(SHARD_DIR)) {
+    console.warn(`[build-data] no source: ${SHARD_DIR}`);
     if (existsSync(resolve(OUT_DIR, "sessions.json"))) {
       console.warn("[build-data] keeping existing snapshot in public/data — portal will still build.");
     } else {
@@ -113,8 +105,8 @@ function main() {
     process.exit(process.env.CLAUDE_RECEIPTS_REQUIRE_SOURCE ? 1 : 0);
   }
 
-  // Merge by session_id; shards (current mechanism) override CSV (history).
-  // Sessions without an id can't be de-duped, so keep them all.
+  // Filename = session_id, so the directory itself guarantees one record per
+  // session; sessions without an id (writer fallback names) are kept as-is.
   const bySid = new Map();
   const noId = [];
   const add = (rec) => {
@@ -124,39 +116,15 @@ function main() {
     else noId.push(s);
   };
 
-  let csvCount = 0, shardCount = 0, badShards = 0;
-
-  // 1) legacy CSV (added first so shards win on collision)
-  if (haveCsv) {
-    const lines = readFileSync(src, "utf8").split(/\r?\n/).filter((l) => l.trim().length);
-    if (lines.length) {
-      const header = parseLine(lines[0]).map((h) => h.trim());
-      const need = ["start_time", "total_cost_usd", "total_tokens", "project"];
-      for (const k of need) {
-        if (!header.includes(k)) { console.error(`[build-data] missing column: ${k}`); process.exit(1); }
-      }
-      for (let li = 1; li < lines.length; li++) {
-        const r = parseLine(lines[li]);
-        if (r.length < header.length) continue; // skip malformed/truncated rows
-        const rec = {};
-        header.forEach((h, i) => { rec[h] = r[i]; });
-        add(rec);
-        csvCount++;
-      }
-    }
-  }
-
-  // 2) per-session JSON shards (override)
-  if (haveShards) {
-    for (const f of readdirSync(SHARD_DIR)) {
-      if (!f.toLowerCase().endsWith(".json")) continue;
-      try {
-        add(JSON.parse(readFileSync(resolve(SHARD_DIR, f), "utf8")));
-        shardCount++;
-      } catch (e) {
-        badShards++;
-        console.warn(`[build-data] skipping bad shard ${f}: ${e.message}`);
-      }
+  let shardCount = 0, badShards = 0;
+  for (const f of readdirSync(SHARD_DIR)) {
+    if (!f.toLowerCase().endsWith(".json")) continue;
+    try {
+      add(JSON.parse(readFileSync(resolve(SHARD_DIR, f), "utf8")));
+      shardCount++;
+    } catch (e) {
+      badShards++;
+      console.warn(`[build-data] skipping bad shard ${f}: ${e.message}`);
     }
   }
 
@@ -179,7 +147,7 @@ function main() {
   const meta = {
     generatedAt: new Date().toISOString(),
     source: src,
-    shardDir: haveShards ? SHARD_DIR : null,
+    shardDir: SHARD_DIR,
     sessions: sessions.length,
     projects: projects.size,
     machines: machines.size,
@@ -194,7 +162,7 @@ function main() {
   writeFileSync(resolve(OUT_DIR, "sessions.json"), JSON.stringify(sessions));
   writeFileSync(resolve(OUT_DIR, "meta.json"), JSON.stringify(meta, null, 2));
   console.log(
-    `[build-data] ${sessions.length} sessions (${csvCount} csv + ${shardCount} shards` +
+    `[build-data] ${sessions.length} sessions (${shardCount} shards` +
       `${badShards ? `, ${badShards} bad` : ""}) · ${projects.size} projects · ` +
       `$${meta.totalCost.toLocaleString("en-US")} → public/data/`,
   );

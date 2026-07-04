@@ -11,8 +11,9 @@ REM
 REM  IMPORTANT: the portal lives at http://localhost:4179 (this launcher).
 REM  Do NOT bookmark http://localhost:4173 - that is a stale built preview.
 REM
-REM  Data source: H:\My Drive\claude-receipts\logbook.csv
+REM  Data source: H:\My Drive\claude-receipts\logbook.d\  (one JSON per session)
 REM  Override:     set CLAUDE_RECEIPTS_LOGBOOK=path\to\logbook.csv
+REM                (anchor path - its sibling logbook.d\ is what gets read)
 REM ====================================================================
 cd /d "%~dp0"
 
