@@ -30,6 +30,7 @@ const PRICING: Record<string, ModelPricing> = {
   "claude-fable-5":     { input: 10, output: 50, cacheWrite: 12.50, cacheRead: 1.00 },
   "claude-opus-4-8":    { input: 5,  output: 25, cacheWrite: 6.25, cacheRead: 0.50 },
   "claude-opus-4-7":    { input: 5,  output: 25, cacheWrite: 6.25, cacheRead: 0.50 },
+  "claude-sonnet-5":    { input: 3,  output: 15, cacheWrite: 3.75, cacheRead: 0.30 },
   "claude-sonnet-4-6":  { input: 3,  output: 15, cacheWrite: 3.75, cacheRead: 0.30 },
   "claude-haiku-4-5":   { input: 1,  output: 5,  cacheWrite: 1.25, cacheRead: 0.10 },
 
