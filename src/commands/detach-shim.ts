@@ -21,7 +21,6 @@ import type { SessionEndHookData } from "../types/session-hook.js";
 export interface DetachShimOptions {
   output?: string[];
   location?: string;
-  printer?: string;
 }
 
 /**
@@ -86,9 +85,6 @@ export function runDetachShim(options: DetachShimOptions): void {
   }
   if (options.location) {
     args.push("--location", options.location);
-  }
-  if (options.printer) {
-    args.push("--printer", options.printer);
   }
 
   try {

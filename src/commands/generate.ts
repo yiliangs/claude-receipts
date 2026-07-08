@@ -1,6 +1,5 @@
 import { stdin } from "process";
-import { existsSync, readFileSync, unlinkSync } from "fs";
-import { join } from "path";
+import { readFileSync, unlinkSync } from "fs";
 import chalk from "chalk";
 import boxen from "boxen";
 import ora from "ora";
@@ -13,24 +12,22 @@ import { TranscriptParser } from "../core/transcript-parser.js";
 import { ReceiptGenerator } from "../core/receipt-generator.js";
 import { HtmlRenderer } from "../core/html-renderer.js";
 import { ImageRenderer } from "../core/image-renderer.js";
-import { ThermalPrinterRenderer } from "../core/thermal-printer.js";
 import { ConfigManager } from "../core/config-manager.js";
 import { LogbookWriter } from "../core/logbook-writer.js";
 import { LocationDetector } from "../utils/location.js";
 import { WeatherFetcher } from "../utils/weather.js";
 import { homeDir, expandHome } from "../utils/paths.js";
 import type { SessionEndHookData } from "../types/session-hook.js";
-import type { ReceiptData } from "../core/receipt-generator.js";
+import type { ReceiptConfig } from "../types/config.js";
 
 const execAsync = promisify(exec);
 
-export type OutputFormat = "html" | "console" | "printer" | "png" | "pdf";
+export type OutputFormat = "html" | "console" | "png" | "pdf";
 
 export interface GenerateOptions {
   session?: string;
   output?: string[];
   location?: string;
-  printer?: string;
   detach?: boolean;
   inputFile?: string;
 }
@@ -42,7 +39,6 @@ export class GenerateCommand {
   private receiptGenerator = new ReceiptGenerator();
   private htmlRenderer = new HtmlRenderer();
   private imageRenderer = new ImageRenderer();
-  private thermalPrinter = new ThermalPrinterRenderer();
   private configManager = new ConfigManager();
   private logbookWriter = new LogbookWriter();
   private locationDetector = new LocationDetector();
@@ -77,6 +73,7 @@ export class GenerateCommand {
 
       // Load config
       const config = await this.configManager.loadConfig();
+      const receiptsRoot = this.receiptsRoot(config);
 
       // Manual mode — resolve transcript path from a UUID prefix (or most
       // recent) by scanning ~/.claude/projects/, no external indexer.
@@ -164,7 +161,7 @@ export class GenerateCommand {
       // old writer, the failure is logged instead of silently swallowed.
       try {
         const shardPath = await this.logbookWriter.append(
-          this.receiptsRoot(),
+          receiptsRoot,
           receiptData,
         );
         this.logHookEvent(`logbook shard written: ${shardPath}`);
@@ -200,17 +197,14 @@ export class GenerateCommand {
       for (const format of outputFormats) {
         try {
           switch (format) {
-            case "printer":
-              await this.outputToPrinter(receiptData, options, config, spinner);
-              break;
             case "html":
-              await this.outputToHtml(renderedHtml, fileBase, isFromHook);
+              await this.outputToHtml(renderedHtml, fileBase, isFromHook, receiptsRoot);
               break;
             case "png":
-              await this.outputToImage(renderedHtml, fileBase, "png");
+              await this.outputToImage(renderedHtml, fileBase, "png", receiptsRoot);
               break;
             case "pdf":
-              await this.outputToImage(renderedHtml, fileBase, "pdf");
+              await this.outputToImage(renderedHtml, fileBase, "pdf", receiptsRoot);
               break;
             case "console":
               this.outputToConsole(receipt);
@@ -289,35 +283,15 @@ export class GenerateCommand {
   }
 
   /**
-   * Send receipt to thermal printer
-   */
-  private async outputToPrinter(
-    receiptData: ReceiptData,
-    options: GenerateOptions,
-    config: { printer?: string },
-    spinner: ReturnType<typeof ora>,
-  ): Promise<void> {
-    const printerInterface = options.printer || config.printer;
-    if (!printerInterface) {
-      throw new Error(
-        'No printer specified. Use --printer <name> or set via: claude-receipts config --set printer=EPSON_TM_T88V',
-      );
-    }
-
-    spinner.start("Sending to printer...");
-    await this.thermalPrinter.printReceipt(receiptData, printerInterface);
-    spinner.succeed(`Receipt sent to printer: ${printerInterface}`);
-  }
-
-  /**
    * Save receipt as HTML and optionally open in browser
    */
   private async outputToHtml(
     html: string,
     fileBase: string,
     isFromHook: boolean,
+    receiptsRoot: string,
   ): Promise<void> {
-    const fullPath = this.outputPathFor(fileBase, "html");
+    const fullPath = this.outputPathFor(receiptsRoot, fileBase, "html");
     await this.saveHtmlFile(html, fullPath);
 
     if (isFromHook) {
@@ -334,11 +308,12 @@ export class GenerateCommand {
     html: string,
     fileBase: string,
     kind: "png" | "pdf",
+    receiptsRoot: string,
   ): Promise<void> {
     const { mkdir } = await import("fs/promises");
     const { dirname, resolve } = await import("path");
 
-    const fullPath = resolve(this.expandPath(this.outputPathFor(fileBase, kind)));
+    const fullPath = resolve(this.expandPath(this.outputPathFor(receiptsRoot, fileBase, kind)));
     await mkdir(dirname(fullPath), { recursive: true });
 
     if (kind === "png") {
@@ -351,22 +326,23 @@ export class GenerateCommand {
   }
 
   /**
-   * Build the standard output path. Defaults to H:/My Drive/claude-receipts
-   * (Yiliang's Google Drive sync); falls back to ~/.claude-receipts/projects/
-   * when the drive isn't mounted, so non-Windows / unmounted runs don't crash.
+   * Build the standard output path under the configured receipts root.
    */
-  private outputPathFor(fileBase: string, ext: string): string {
-    return `${this.receiptsRoot()}/${fileBase}.${ext}`;
+  private outputPathFor(receiptsRoot: string, fileBase: string, ext: string): string {
+    return `${receiptsRoot}/${fileBase}.${ext}`;
   }
 
   /**
-   * Resolve the root folder for receipts + logbook. See outputPathFor for the
-   * fallback rationale.
+   * Resolve the root folder for receipts + the `logbook.d/` shards.
+   *
+   * Precedence: the `receiptsRoot` config value (leading `~` expanded), else
+   * the default `~/.claude-receipts/projects`. Set the config value to a synced
+   * folder (e.g. `H:/My Drive/claude-receipts`) to collect receipts across
+   * machines — there is no hardcoded machine-specific default.
    */
-  receiptsRoot(): string {
-    const primary = "H:/My Drive/claude-receipts";
-    if (existsSync("H:/My Drive")) return primary;
-    return `${homeDir()}/.claude-receipts/projects`;
+  receiptsRoot(config: ReceiptConfig): string {
+    const configured = config.receiptsRoot?.trim();
+    return expandHome(configured || `${homeDir()}/.claude-receipts/projects`);
   }
 
   /**

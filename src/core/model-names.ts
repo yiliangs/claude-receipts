@@ -1,8 +1,8 @@
 import { normalizeModelId } from "./pricing.js";
 
 /**
- * Human-readable display names for Claude model IDs, shared by all three
- * renderers (text receipt, HTML, thermal printer). Keyed by the normalized
+ * Human-readable display names for Claude model IDs, shared by the text and
+ * HTML renderers. Keyed by the normalized
  * alias — normalizeModelId strips date suffixes ("-20251001") and context
  * variant suffixes ("[1m]") so every shape of the same model resolves here.
  *

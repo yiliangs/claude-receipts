@@ -51,7 +51,10 @@ const home = process.env.USERPROFILE || process.env.HOME || "";
 // Logbook column indices (see logbook-writer.ts HEADER).
 const COL = { sessionId: 2, machine: 6, input: 12, output: 13, cacheC: 14, cacheR: 15, total: 16, cost: 17, models: 18 };
 
-/** Mirror of GenerateCommand.receiptsRoot() so we hit the same logbook. */
+/**
+ * The canonical Drive logbook this repo's author writes to (via the config
+ * `receiptsRoot`). Pass --logbook=<path> to point at a different receipts root.
+ */
 function defaultLogbook() {
   if (existsSync("H:/My Drive")) return "H:/My Drive/claude-receipts/logbook.csv";
   return join(home, ".claude-receipts", "projects", "logbook.csv");

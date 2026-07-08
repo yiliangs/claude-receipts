@@ -57,7 +57,10 @@ export class ConfigCommand {
     this.printConfigItem("Version", config.version);
     this.printConfigItem("Location", config.location || "(auto-detect)");
     this.printConfigItem("Timezone", config.timezone || "(system default)");
-    this.printConfigItem("Printer", config.printer || "(not set)");
+    this.printConfigItem(
+      "Receipts root",
+      config.receiptsRoot || "(default: ~/.claude-receipts/projects)",
+    );
 
     console.log("");
   }
@@ -76,7 +79,11 @@ export class ConfigCommand {
     const trimmedKey = key.trim() as keyof ReceiptConfig;
 
     // Validate key
-    const validKeys: (keyof ReceiptConfig)[] = ["location", "timezone", "printer"];
+    const validKeys: (keyof ReceiptConfig)[] = [
+      "location",
+      "timezone",
+      "receiptsRoot",
+    ];
 
     if (!validKeys.includes(trimmedKey)) {
       throw new Error(
@@ -88,7 +95,8 @@ export class ConfigCommand {
       throw new Error(
         `Invalid location "${value}": looks like a filesystem path. ` +
           `Location should be a city/region (e.g. "Chicago, IL"). ` +
-          `Output directory is not configurable; receipts go to H:/My Drive/claude-receipts when mounted.`,
+          `To change where receipts are saved, set receiptsRoot instead ` +
+          `(e.g. claude-receipts config --set receiptsRoot="H:/My Drive/claude-receipts").`,
       );
     }
 

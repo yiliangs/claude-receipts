@@ -49,8 +49,7 @@
     "date-fns-tz": "^3.2.0",
     "geoip-lite": "^1.4.10",
     "ora": "^9.1.0",
-    "prompts": "^2.4.2",
-    "usb": "^2.17.0"
+    "prompts": "^2.4.2"
   },
   "devDependencies": {
     "@types/geoip-lite": "^1.4.4",

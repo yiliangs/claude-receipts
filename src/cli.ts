@@ -22,10 +22,10 @@ program
   .description("Generate a receipt for a Claude Code session")
   .option("-s, --session <id>", "Specific session ID to generate receipt for")
   .addOption(
-    new Option("-o, --output <format...>", "Output format(s): html, png, pdf, console, printer (comma-separated or repeated)")
+    new Option("-o, --output <format...>", "Output format(s): html, png, pdf, console (comma-separated or repeated)")
       .argParser((value: string, prev: string[] | undefined) => {
         const formats = value.split(",").map((s) => s.trim()).filter(Boolean);
-        const valid = ["html", "png", "pdf", "console", "printer"];
+        const valid = ["html", "png", "pdf", "console"];
         for (const f of formats) {
           if (!valid.includes(f)) {
             throw new Error(`Invalid output format "${f}". Valid formats: ${valid.join(", ")}`);
@@ -35,10 +35,6 @@ program
       }),
   )
   .option("-l, --location <text>", "Override location detection")
-  .option(
-    "-p, --printer <interface>",
-    'Printer: "usb" (auto-detect), "usb:VID:PID", "tcp://host:port", or CUPS name',
-  )
   .option(
     "--detach",
     "Hook shim mode: read stdin, spawn a detached worker that does the actual work, exit immediately. Used in the SessionEnd hook so /clear and /exit can't kill mid-render children.",

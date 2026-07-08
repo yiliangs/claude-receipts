@@ -83,10 +83,18 @@ npx claude-receipts generate --location "Paris, France"
 
 **Output formats:**
 
-- `html` - Beautiful styled receipt saved to `~/.claude-receipts/projects/`
+- `html` - Beautiful styled receipt saved to your receipts root
 - `png` - Rasterized receipt image (rendered via headless Chromium)
 - `pdf` - PDF receipt (rendered via headless Chromium)
 - `console` - ASCII art display in terminal
+
+Files (and the `logbook.d/` shards) are written to your **receipts root** —
+`~/.claude-receipts/projects` by default. Point it anywhere (e.g. a synced
+Google Drive folder to collect receipts across machines) with:
+
+```bash
+npx claude-receipts config --set receiptsRoot="H:/My Drive/claude-receipts"
+```
 
 ### `setup`
 
@@ -114,6 +122,7 @@ npx claude-receipts config --show
 # Set a configuration value
 npx claude-receipts config --set location="Kuala Lumpur, Malaysia"
 npx claude-receipts config --set timezone="Asia/Kuala_Lumpur"
+npx claude-receipts config --set receiptsRoot="H:/My Drive/claude-receipts"
 
 # Reset to defaults
 npx claude-receipts config --reset
@@ -123,6 +132,7 @@ npx claude-receipts config --reset
 
 - `location` - Default location (string)
 - `timezone` - Timezone for dates (string, e.g., "Asia/Macau")
+- `receiptsRoot` - Directory for receipts + logbook (path; `~` is expanded)
 
 ## Configuration
 
@@ -140,6 +150,7 @@ Configuration is stored at `~/.claude-receipts.config.json`.
 
 - `location` - Custom location string (otherwise auto-detected)
 - `timezone` - Custom timezone for date formatting
+- `receiptsRoot` - Where receipts and the logbook are written (default `~/.claude-receipts/projects`; `~` is expanded)
 
 ### Location detection
 

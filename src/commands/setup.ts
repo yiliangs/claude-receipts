@@ -73,7 +73,6 @@ export class SetupCommand {
           { title: "HTML (opens in browser)", value: "html", selected: true },
           { title: "PNG image", value: "png", selected: true },
           { title: "PDF", value: "pdf", selected: true },
-          { title: "Thermal printer", value: "printer" },
         ],
         hint: "- Space to select, Enter to confirm",
         instructions: false,
@@ -131,11 +130,9 @@ export class SetupCommand {
           "PDFs will be saved to ~/.claude-receipts/projects/<slug>.pdf",
         );
       }
-      if (outputs.includes("printer")) {
-        tips.push(
-          "Receipts will be sent to your thermal printer (configure with: claude-receipts config --set printer=<name>)",
-        );
-      }
+      tips.push(
+        'Change where receipts are saved with: claude-receipts config --set receiptsRoot="<path>"',
+      );
       console.log(chalk.cyan(tips.join("\n") + "\n"));
     } catch (error) {
       spinner.fail("Setup failed");
