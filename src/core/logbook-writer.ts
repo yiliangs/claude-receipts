@@ -31,6 +31,9 @@ export interface LogbookRecord {
   total_tokens: number;
   total_cost_usd: number;
   models: string[];
+  /** Which tool produced the session. Shards written before 2026-07-09 lack
+   *  the field — consumers default it to "claude". */
+  provider: string;
 }
 
 /**
@@ -110,6 +113,7 @@ export class LogbookWriter {
       total_tokens: sessionData.totalTokens ?? 0,
       total_cost_usd: Number((sessionData.totalCost ?? 0).toFixed(6)),
       models,
+      provider: sessionData.provider,
     };
   }
 }

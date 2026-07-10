@@ -105,6 +105,8 @@ function toSession(rec) {
     totalTokens: num(rec.total_tokens),
     cost: num(rec.total_cost_usd),
     models,
+    // Shards written before 2026-07-09 predate the provider field.
+    provider: String(rec.provider || "claude"),
   };
 }
 

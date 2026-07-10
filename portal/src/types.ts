@@ -20,6 +20,8 @@ export interface RawSession {
   totalTokens: number
   cost: number
   models: string[]
+  // "claude" for all pre-2026-07-09 shards; other providers when they land.
+  provider: string
 }
 
 export interface Meta {
