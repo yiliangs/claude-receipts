@@ -124,6 +124,19 @@ true test of the fix is closing a real interactive session and checking the log.
    The worker leg (`generate --input-file`) still loads the full graph — fine,
    it's detached and off the critical path.
 
+6. **macOS support** (2026-07-09) — Two latent failures found while making the
+   repo cloneable on a MacBook, both in the "hook never started" class (no
+   `shim …` line in hook.log at all):
+   - `bin/run-hook.sh` was committed **without the executable bit** (mode
+     100644). Windows never notices (Git Bash execs it regardless of mode);
+     on macOS the hook dies instantly with *permission denied* before the
+     first log write. Fixed with `git update-index --chmod=+x`.
+   - Node resolution knew PATH → WinGet → nvm but not **Homebrew**
+     (`/opt/homebrew/bin` on Apple Silicon, `/usr/local/bin` on Intel).
+     Homebrew's dirs reach PATH via the login shell's profile, which a hook
+     shell doesn't source — the same stripped-PATH failure WinGet globbing
+     fixed on Windows. Added both candidates between the WinGet and nvm legs.
+
 ---
 
 ## The recurring trap, stated plainly
@@ -161,8 +174,14 @@ true test of the fix is closing a real interactive session and checking the log.
    worker falls into wrong-session manual mode).
 7. **Validate on a real `/exit`, not just `/clear`.** `/clear` masks this entire
    bug class because the process stays alive.
+8. **`bin/run-hook.sh` (and any launcher script) must stay committed with the
+   executable bit (mode 100755).** A Windows checkout cannot see the bit
+   (`core.filemode=false`), so losing it is invisible here and fatal on macOS
+   — the hook fails with *permission denied* before its first log write.
+   Check with `git ls-files -s bin/run-hook.sh`; fix with
+   `git update-index --chmod=+x`.
 
 ---
 
-*Last updated: 2026-05-27 — false-negative ("hook is cancelled") root-caused to
-heavy shim imports; shim split into `detach-shim.ts` + lazy `cli.ts` imports.*
+*Last updated: 2026-07-09 — macOS: exec bit restored on run-hook.sh, Homebrew
+node resolution added (invariant 8).*
