@@ -6,10 +6,13 @@ export interface ReceiptConfig {
   timezone?: string;
   /**
    * Directory where receipts (HTML/PNG/PDF) and the `logbook.d/` shards are
-   * written. A leading `~` is expanded to the home directory. When unset,
-   * defaults to `~/.claude-receipts/projects`. Set it to a synced folder
-   * (e.g. a Google Drive path like `H:/My Drive/claude-receipts`) to collect
-   * receipts across machines.
+   * written. A leading `~` is expanded to the home directory. Set it to a
+   * synced folder to collect receipts across machines — e.g.
+   * `H:/My Drive/claude-receipts` (Windows) or
+   * `~/Library/CloudStorage/GoogleDrive-<account>/My Drive/claude-receipts`
+   * (macOS). When unset, utils/receipts-root.ts auto-detects an established
+   * shared root on a Google Drive mount, else falls back to
+   * `~/.claude-receipts/projects`.
    */
   receiptsRoot?: string;
 }

@@ -27,11 +27,10 @@
  */
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { resolveReceiptsRootFromDisk } from "../dist/utils/receipts-root.js";
 
 const HOME = process.env.USERPROFILE || process.env.HOME || "";
-const ROOT = existsSync("H:/My Drive")
-  ? "H:/My Drive/claude-receipts"
-  : join(HOME, ".claude-receipts", "projects");
+const ROOT = resolveReceiptsRootFromDisk().root;
 const DIR = join(ROOT, "logbook.d");
 const LOCAL_DIR = join(HOME, ".claude-receipts", "projects", "logbook.d");
 const HOOK_LOG = join(HOME, ".claude-receipts", "hook.log");

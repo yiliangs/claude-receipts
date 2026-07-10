@@ -10,8 +10,8 @@ import { ConfigManager } from "../dist/core/config-manager.js";
 import { LogbookWriter } from "../dist/core/logbook-writer.js";
 import { LocationDetector } from "../dist/utils/location.js";
 import { WeatherFetcher } from "../dist/utils/weather.js";
+import { resolveReceiptsRoot } from "../dist/utils/receipts-root.js";
 import { writeFile, mkdir } from "fs/promises";
-import { existsSync } from "fs";
 import { join } from "path";
 
 const [, , sessionId, transcriptPath] = process.argv;
@@ -53,10 +53,7 @@ const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(
 const slug = transcriptData.sessionSlug || sessionId;
 const fileBase = `${slug}-${ts}`;
 
-const home = process.env.HOME || process.env.USERPROFILE || "";
-const outDir = existsSync("H:/My Drive")
-  ? "H:/My Drive/claude-receipts"
-  : join(home, ".claude-receipts", "projects");
+const outDir = resolveReceiptsRoot(config).root;
 await mkdir(outDir, { recursive: true });
 await logbook.append(outDir, receiptData);
 

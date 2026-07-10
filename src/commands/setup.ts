@@ -7,6 +7,10 @@ import prompts from "prompts";
 import ora from "ora";
 import { ConfigManager } from "../core/config-manager.js";
 import { homeDir } from "../utils/paths.js";
+import {
+  detectSharedReceiptsRoot,
+  resolveReceiptsRoot,
+} from "../utils/receipts-root.js";
 import type { ReceiptConfig } from "../types/config.js";
 
 interface ClaudeSettings {
@@ -57,13 +61,25 @@ export class SetupCommand {
    * Install the SessionEnd hook
    */
   private async install(): Promise<void> {
+    // Start from the existing config so re-running setup never clobbers
+    // values set elsewhere (receiptsRoot, timezone).
+    const existing = await this.configManager.loadConfig();
+
+    // When no receipts root is configured but another machine already
+    // established a shared one on a Google Drive mount, offer to join it —
+    // otherwise this machine silently forks onto the local default and its
+    // sessions never reach the shared logbook.
+    const detectedRoot = existing.receiptsRoot?.trim()
+      ? null
+      : detectSharedReceiptsRoot();
+
     // Prompt user for configuration
     const answers = await prompts([
       {
         type: "text",
         name: "location",
         message: "Default location (leave blank to auto-detect):",
-        initial: "",
+        initial: existing.location || "",
       },
       {
         type: "multiselect",
@@ -77,6 +93,16 @@ export class SetupCommand {
         hint: "- Space to select, Enter to confirm",
         instructions: false,
       },
+      ...(detectedRoot
+        ? [
+            {
+              type: "confirm" as const,
+              name: "useDetectedRoot",
+              message: `Shared receipts folder detected at ${detectedRoot} — write receipts + logbook there?`,
+              initial: true,
+            },
+          ]
+        : []),
     ]);
 
     // User cancelled
@@ -91,10 +117,14 @@ export class SetupCommand {
     const spinner = ora("Setting up hook...").start();
 
     try {
-      // Create config
+      // Persisting the detected root pins it: resolution no longer depends
+      // on the Drive mount being up at hook time.
       const config: ReceiptConfig = {
-        version: "1.0.0",
+        ...existing,
         location: answers.location || undefined,
+        ...(detectedRoot && answers.useDetectedRoot
+          ? { receiptsRoot: detectedRoot }
+          : {}),
       };
 
       await this.configManager.saveConfig(config);
@@ -114,6 +144,7 @@ export class SetupCommand {
         chalk.gray(`  Config file: ${this.configManager.getConfigPath()}\n`),
       );
 
+      const effectiveRoot = resolveReceiptsRoot(config).root;
       const tips: string[] = [];
       if (outputs.includes("html")) {
         tips.push(
@@ -121,14 +152,10 @@ export class SetupCommand {
         );
       }
       if (outputs.includes("png")) {
-        tips.push(
-          "PNG images will be saved to ~/.claude-receipts/projects/<slug>.png",
-        );
+        tips.push(`PNG images will be saved to ${effectiveRoot}/<slug>.png`);
       }
       if (outputs.includes("pdf")) {
-        tips.push(
-          "PDFs will be saved to ~/.claude-receipts/projects/<slug>.pdf",
-        );
+        tips.push(`PDFs will be saved to ${effectiveRoot}/<slug>.pdf`);
       }
       tips.push(
         'Change where receipts are saved with: claude-receipts config --set receiptsRoot="<path>"',

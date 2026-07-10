@@ -88,12 +88,18 @@ npx claude-receipts generate --location "Paris, France"
 - `pdf` - PDF receipt (rendered via headless Chromium)
 - `console` - ASCII art display in terminal
 
-Files (and the `logbook.d/` shards) are written to your **receipts root** —
-`~/.claude-receipts/projects` by default. Point it anywhere (e.g. a synced
-Google Drive folder to collect receipts across machines) with:
+Files (and the `logbook.d/` shards) are written to your **receipts root**.
+When unset, an established shared root on a Google Drive mount is auto-detected
+(Windows drive letters and macOS `~/Library/CloudStorage/GoogleDrive-*` are
+checked for `claude-receipts/logbook.d/`), else `~/.claude-receipts/projects`
+is used. Point it anywhere explicitly (e.g. a synced Google Drive folder to
+collect receipts across machines) with:
 
 ```bash
+# Windows
 npx claude-receipts config --set receiptsRoot="H:/My Drive/claude-receipts"
+# macOS
+npx claude-receipts config --set receiptsRoot="~/Library/CloudStorage/GoogleDrive-you@example.com/My Drive/claude-receipts"
 ```
 
 ### `setup`

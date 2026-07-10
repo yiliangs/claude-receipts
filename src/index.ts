@@ -6,6 +6,11 @@ export { ReceiptGenerator } from "./core/receipt-generator.js";
 export { ConfigManager } from "./core/config-manager.js";
 export { LocationDetector } from "./utils/location.js";
 export { GenerateCommand } from "./commands/generate.js";
+export {
+  resolveReceiptsRoot,
+  resolveReceiptsRootFromDisk,
+  detectSharedReceiptsRoot,
+} from "./utils/receipts-root.js";
 
 // Type exports
 export type { SessionUsage, ModelBreakdown } from "./types/session.js";

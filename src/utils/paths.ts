@@ -17,6 +17,15 @@ export function homeDir(): string {
 }
 
 /**
+ * Absolute path of the user config file. Shared by ConfigManager (async R/W)
+ * and receipts-root.ts (sync read from scripts/portal), so the location can't
+ * drift between the two.
+ */
+export function configFilePath(): string {
+  return `${homeDir()}/.claude-receipts.config.json`;
+}
+
+/**
  * Expand a leading "~" to the home directory. Leaves any other path untouched.
  * Matches the prior inline behavior (`replace(/^~/, home)`).
  */

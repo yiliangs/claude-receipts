@@ -6,10 +6,11 @@ import { spawn } from "child_process";
 import { readFile, readdir, stat } from "fs/promises";
 import { join, basename, extname } from "path";
 import { existsSync } from "fs";
+import { resolveReceiptsRootFromDisk } from "../dist/utils/receipts-root.js";
 
 const HOME = process.env.USERPROFILE || process.env.HOME || "";
 const PROJECTS = join(HOME, ".claude", "projects");
-const SHARD_DIR = "H:/My Drive/claude-receipts/logbook.d";
+const SHARD_DIR = join(resolveReceiptsRootFromDisk().root, "logbook.d");
 const REGEN = join(process.cwd(), "scripts", "regen-session.mjs");
 const CURRENT_SESSION = process.argv[2] || ""; // optional skip
 const MIN_AGE_SEC = 120; // skip transcripts modified in the last 2 min

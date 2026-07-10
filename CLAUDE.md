@@ -52,9 +52,17 @@ ReceiptGenerator (text) + HtmlRenderer (styled HTML)
   ↓
 LogbookWriter writes one JSON shard to logbook.d/<session_id>.json
   ↓
-Save to H:/My Drive/claude-receipts/[slug-timestamp].html (or fallback)
+Save to <receiptsRoot>/[slug-timestamp].html
   + open browser (hook mode only)
 ```
+
+The receipts root is resolved by `src/utils/receipts-root.ts` — the ONLY
+module that knows the chain (config `receiptsRoot` → auto-detected Google
+Drive mount holding `claude-receipts/logbook.d/` → local
+`~/.claude-receipts/projects`). The generate worker, `setup`, the ops
+scripts in `scripts/`, and the portal's `build-data.mjs` all resolve through
+it (the `.mjs` consumers import it from `dist/`), so every reader and writer
+agrees on one root per machine. Never resolve the root inline anywhere else.
 
 Cost is computed inline from the transcript JSONL — no ccusage, no
 subprocess, no indexer-lag retries. Hook finishes in ~1s on the fast path.
@@ -80,6 +88,8 @@ subprocess, no indexer-lag retries. Hook finishes in ~1s on the fast path.
 
 **Utils** (`src/utils/`)
 
+- `receipts-root.ts` - Canonical receipts-root resolution (config → Google Drive mount detection → local default); built-ins only so scripts and the portal import it from `dist/`
+- `paths.ts` - `homeDir()` / `expandHome()` / `configFilePath()`; built-ins only
 - `location.ts` - Location detection chain: CLI flag → config → IP geolocation (geoip-lite) → fallback
 - `formatting.ts` - Currency, number, date/time, duration formatting
 - `ascii-art.ts` - Claude logo and separators for text receipts
@@ -154,6 +164,7 @@ All types in `src/types/`:
 - New Claude model launches require a `pricing.ts` entry — until added, sessions bill at $0 (logged as `pricing miss`)
 - 5m vs 1h cache TTL is not distinguished in the transcript; cache writes are priced at the 5m rate
 - Browser auto-open uses platform-specific commands (`open`, `start`, `xdg-open`)
+- Windows and macOS are first-class platforms. `bin/run-hook.sh` and `portal/Claude-Receipts.command` must stay committed with the executable bit (100755) — a Windows checkout can't see the bit, and losing it breaks the hook/launcher on macOS with *permission denied* (SESSIONEND-HOOK-LOG invariant 8)
 
 ## Hook Installation
 
@@ -167,7 +178,7 @@ Setup command modifies `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "npx claude-receipts@latest generate --output html"
+            "command": "\"$HOME/source/repos/claude-receipts/bin/run-hook.sh\" generate --detach --output html,png,pdf"
           }
         ]
       }
@@ -176,4 +187,10 @@ Setup command modifies `~/.claude/settings.json`:
 }
 ```
 
-Always backs up settings.json before modification. Uses `@latest` to ensure users get updates without reinstalling.
+The command pins to this local checkout's `bin/run-hook.sh` (written
+`$HOME`-relative with forward slashes, so the same settings.json works on any
+machine that mirrors the repo at the same location under HOME). The wrapper
+resolves node at run time (PATH → WinGet → Homebrew → nvm) — never bake an
+absolute node path into settings.json. Setup also offers to adopt a detected
+shared receipts root when none is configured. Always backs up settings.json
+before modification.

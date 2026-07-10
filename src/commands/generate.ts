@@ -16,9 +16,9 @@ import { ConfigManager } from "../core/config-manager.js";
 import { LogbookWriter } from "../core/logbook-writer.js";
 import { LocationDetector } from "../utils/location.js";
 import { WeatherFetcher } from "../utils/weather.js";
-import { homeDir, expandHome } from "../utils/paths.js";
+import { expandHome } from "../utils/paths.js";
+import { resolveReceiptsRoot } from "../utils/receipts-root.js";
 import type { SessionEndHookData } from "../types/session-hook.js";
-import type { ReceiptConfig } from "../types/config.js";
 
 const execAsync = promisify(exec);
 
@@ -71,9 +71,14 @@ export class GenerateCommand {
         this.logHookEvent(`stdin none (TTY=${stdin.isTTY ?? "?"}) — manual mode`);
       }
 
-      // Load config
+      // Load config and resolve the receipts root (config → auto-detected
+      // Drive mount → local default). Logging the source makes a silent
+      // fork visible: a machine writing to "default" while the others share
+      // a Drive root shows up in hook.log, not just in missing totals.
       const config = await this.configManager.loadConfig();
-      const receiptsRoot = this.receiptsRoot(config);
+      const { root: receiptsRoot, source: rootSource } =
+        resolveReceiptsRoot(config);
+      this.logHookEvent(`receipts root ${receiptsRoot} (${rootSource})`);
 
       // Manual mode — resolve transcript path from a UUID prefix (or most
       // recent) by scanning ~/.claude/projects/, no external indexer.
@@ -330,19 +335,6 @@ export class GenerateCommand {
    */
   private outputPathFor(receiptsRoot: string, fileBase: string, ext: string): string {
     return `${receiptsRoot}/${fileBase}.${ext}`;
-  }
-
-  /**
-   * Resolve the root folder for receipts + the `logbook.d/` shards.
-   *
-   * Precedence: the `receiptsRoot` config value (leading `~` expanded), else
-   * the default `~/.claude-receipts/projects`. Set the config value to a synced
-   * folder (e.g. `H:/My Drive/claude-receipts`) to collect receipts across
-   * machines — there is no hardcoded machine-specific default.
-   */
-  receiptsRoot(config: ReceiptConfig): string {
-    const configured = config.receiptsRoot?.trim();
-    return expandHome(configured || `${homeDir()}/.claude-receipts/projects`);
   }
 
   /**

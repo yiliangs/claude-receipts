@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import { ConfigManager } from "../core/config-manager.js";
 import { LocationDetector } from "../utils/location.js";
+import { resolveReceiptsRoot } from "../utils/receipts-root.js";
 import type { ReceiptConfig } from "../types/config.js";
 
 export interface ConfigOptions {
@@ -54,12 +55,13 @@ export class ConfigCommand {
     console.log(chalk.cyan.bold("\nClaude Receipts Configuration"));
     console.log(chalk.gray(`Location: ${configPath}\n`));
 
+    const { root, source } = resolveReceiptsRoot(config);
     this.printConfigItem("Version", config.version);
     this.printConfigItem("Location", config.location || "(auto-detect)");
     this.printConfigItem("Timezone", config.timezone || "(system default)");
     this.printConfigItem(
       "Receipts root",
-      config.receiptsRoot || "(default: ~/.claude-receipts/projects)",
+      source === "config" ? root : `${root} (${source})`,
     );
 
     console.log("");
@@ -96,7 +98,7 @@ export class ConfigCommand {
         `Invalid location "${value}": looks like a filesystem path. ` +
           `Location should be a city/region (e.g. "Chicago, IL"). ` +
           `To change where receipts are saved, set receiptsRoot instead ` +
-          `(e.g. claude-receipts config --set receiptsRoot="H:/My Drive/claude-receipts").`,
+          `(e.g. claude-receipts config --set receiptsRoot="<your Google Drive mount>/claude-receipts").`,
       );
     }
 

@@ -1,7 +1,7 @@
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
-import { homeDir } from "../utils/paths.js";
+import { configFilePath } from "../utils/paths.js";
 import type { ReceiptConfig } from "../types/config.js";
 import { DEFAULT_CONFIG } from "../types/config.js";
 
@@ -9,7 +9,7 @@ export class ConfigManager {
   private configPath: string;
 
   constructor() {
-    this.configPath = join(homeDir(), ".claude-receipts.config.json");
+    this.configPath = configFilePath();
   }
 
   /**
