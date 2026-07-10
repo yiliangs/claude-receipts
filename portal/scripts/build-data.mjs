@@ -17,11 +17,14 @@
    next to the shard dir is IGNORED with a loud warning: two sources is the
    exact design this migration removed.
 
-   Source path resolution (first hit wins) — the legacy CSV path anchors the
-   location; only its sibling logbook.d/ is read:
-     1. argv[2]
-     2. $CLAUDE_RECEIPTS_LOGBOOK
-     3. H:\My Drive\claude-receipts\logbook.csv   (the canonical Drive copy)
+   Source resolution (first hit wins):
+     1. argv[2]                    — a receipts-root dir, or (legacy) a path
+     2. $CLAUDE_RECEIPTS_LOGBOOK     to logbook.csv whose parent anchors it
+     3. the package's canonical resolver (dist/utils/receipts-root.js):
+        config receiptsRoot → auto-detected Google Drive mount → local default
+   The resolver import requires the package built at the repo root
+   (npm run build); without it and without an override, the portal keeps
+   whatever snapshot is already in public/data.
 
    If the shard dir is unreachable, the existing snapshot in public/data is
    left untouched so the portal still builds offline.
@@ -38,10 +41,31 @@ import { dirname, resolve } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = resolve(__dirname, "../public/data");
-const DEFAULT_SRC = "H:/My Drive/claude-receipts/logbook.csv";
 
-const src = process.argv[2] || process.env.CLAUDE_RECEIPTS_LOGBOOK || DEFAULT_SRC;
-const SHARD_DIR = resolve(dirname(src), "logbook.d");
+function overrideRoot() {
+  const given = process.argv[2] || process.env.CLAUDE_RECEIPTS_LOGBOOK;
+  if (!given) return null;
+  return given.toLowerCase().endsWith(".csv")
+    ? dirname(resolve(given))
+    : resolve(given);
+}
+
+async function canonicalRoot() {
+  try {
+    const { resolveReceiptsRootFromDisk } = await import(
+      "../../dist/utils/receipts-root.js"
+    );
+    return resolveReceiptsRootFromDisk().root;
+  } catch {
+    console.warn(
+      "[build-data] cannot load dist/utils/receipts-root.js — run `npm run build` at the repo root, or pass a root via argv/$CLAUDE_RECEIPTS_LOGBOOK.",
+    );
+    return null;
+  }
+}
+
+const ROOT = overrideRoot() ?? (await canonicalRoot());
+const SHARD_DIR = ROOT ? resolve(ROOT, "logbook.d") : null;
 
 const num = (v) => {
   const n = Number(typeof v === "string" ? v.trim() : v);
@@ -85,15 +109,16 @@ function toSession(rec) {
 }
 
 function main() {
-  if (existsSync(src)) {
+  const legacyCsv = ROOT ? resolve(ROOT, "logbook.csv") : null;
+  if (legacyCsv && existsSync(legacyCsv)) {
     console.warn(
-      `[build-data] WARNING: legacy ${src} exists but is IGNORED — logbook.d/ is the single ` +
+      `[build-data] WARNING: legacy ${legacyCsv} exists but is IGNORED — logbook.d/ is the single ` +
         `source of truth (migrated 2026-07-04). Fold it in with scripts/migrate-csv-to-shards.mjs.`,
     );
   }
 
-  if (!existsSync(SHARD_DIR)) {
-    console.warn(`[build-data] no source: ${SHARD_DIR}`);
+  if (!SHARD_DIR || !existsSync(SHARD_DIR)) {
+    console.warn(`[build-data] no source: ${SHARD_DIR ?? "(unresolved receipts root)"}`);
     if (existsSync(resolve(OUT_DIR, "sessions.json"))) {
       console.warn("[build-data] keeping existing snapshot in public/data — portal will still build.");
     } else {
@@ -146,7 +171,7 @@ function main() {
   }
   const meta = {
     generatedAt: new Date().toISOString(),
-    source: src,
+    source: ROOT,
     shardDir: SHARD_DIR,
     sessions: sessions.length,
     projects: projects.size,

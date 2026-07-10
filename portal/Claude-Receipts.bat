@@ -11,9 +11,9 @@ REM
 REM  IMPORTANT: the portal lives at http://localhost:4179 (this launcher).
 REM  Do NOT bookmark http://localhost:4173 - that is a stale built preview.
 REM
-REM  Data source: H:\My Drive\claude-receipts\logbook.d\  (one JSON per session)
-REM  Override:     set CLAUDE_RECEIPTS_LOGBOOK=path\to\logbook.csv
-REM                (anchor path - its sibling logbook.d\ is what gets read)
+REM  Data source: the receipts root from ~/.claude-receipts.config.json,
+REM  else an auto-detected Google Drive mount (dist/utils/receipts-root.js).
+REM  Override:     set CLAUDE_RECEIPTS_LOGBOOK=path\to\receipts-root
 REM ====================================================================
 cd /d "%~dp0"
 
@@ -50,7 +50,7 @@ call npm run data --silent
 if errorlevel 1 (
   echo.
   echo  WARNING: could not refresh from the logbook - opening with the last
-  echo  saved snapshot. Check that H:\My Drive is connected, then relaunch
+  echo  saved snapshot. Check that Google Drive is connected, then relaunch
   echo  to pick up the newest sessions.
   echo.
 )

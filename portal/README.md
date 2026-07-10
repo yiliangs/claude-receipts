@@ -13,7 +13,9 @@ filter the whole portal.
 ## How it works
 
 ```
-H:\My Drive\claude-receipts\logbook.d\*.json   (one shard per session)
+<receipts root>/logbook.d/*.json   (one shard per session; root resolved by
+        |                           dist/utils/receipts-root.js: config ->
+        |                           Google Drive mount -> local default)
         |  scripts/build-data.mjs  (shards -> clean JSON)
         v
 portal/public/data/{sessions.json, meta.json}

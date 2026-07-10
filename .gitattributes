@@ -1,1 +1,5 @@
 *.sh text eol=lf
+# macOS double-clickable launchers are bash: CRLF breaks them ("\r: command not found")
+*.command text eol=lf
+# Windows batch files require CRLF under some cmd.exe parsing edge cases
+*.bat text eol=crlf
