@@ -6,9 +6,7 @@ import ora from "ora";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { logHookEvent } from "../utils/hook-log.js";
-import { UsageCalculator } from "../core/usage-calculator.js";
-import { SessionFinder } from "../core/session-finder.js";
-import { TranscriptParser } from "../core/transcript-parser.js";
+import { ClaudeProvider } from "../providers/claude/provider.js";
 import { ReceiptGenerator } from "../core/receipt-generator.js";
 import { HtmlRenderer } from "../core/html-renderer.js";
 import { ImageRenderer } from "../core/image-renderer.js";
@@ -19,6 +17,7 @@ import { WeatherFetcher } from "../utils/weather.js";
 import { expandHome } from "../utils/paths.js";
 import { resolveReceiptsRoot } from "../utils/receipts-root.js";
 import type { SessionEndHookData } from "../types/session-hook.js";
+import type { SessionProvider } from "../types/provider.js";
 
 const execAsync = promisify(exec);
 
@@ -33,9 +32,9 @@ export interface GenerateOptions {
 }
 
 export class GenerateCommand {
-  private usageCalculator = new UsageCalculator();
-  private sessionFinder = new SessionFinder();
-  private transcriptParser = new TranscriptParser();
+  // The only provider today. When a second one lands (e.g. Codex), this
+  // becomes a lookup keyed by a --provider flag / hook argument.
+  private provider: SessionProvider = new ClaudeProvider();
   private receiptGenerator = new ReceiptGenerator();
   private htmlRenderer = new HtmlRenderer();
   private imageRenderer = new ImageRenderer();
@@ -83,7 +82,7 @@ export class GenerateCommand {
       // Manual mode — resolve transcript path from a UUID prefix (or most
       // recent) by scanning ~/.claude/projects/, no external indexer.
       if (!transcriptPath) {
-        const found = await this.sessionFinder.find(options.session);
+        const found = await this.provider.findSession(options.session);
         transcriptPath = found.transcriptPath;
         actualSessionId = found.sessionId;
         this.logHookEvent(`manual session=${actualSessionId} transcript=${transcriptPath}`);
@@ -92,14 +91,14 @@ export class GenerateCommand {
       // Compute usage + cost directly from the transcript JSONL.
       // No subprocess, no retry — the file is what Claude Code just wrote.
       spinner.text = "Computing session cost...";
-      const sessionData = await this.usageCalculator.calculate(
+      const sessionData = await this.provider.calculateUsage(
         transcriptPath,
         actualSessionId ?? "",
       );
-      const unknown = this.usageCalculator.getUnknownModels();
+      const unknown = this.provider.getUnknownModels();
       if (unknown.length > 0) {
         this.logHookEvent(
-          `pricing miss for models=${unknown.join(",")} — billed at $0; add to src/core/pricing.ts`,
+          `pricing miss for models=${unknown.join(",")} — billed at $0; add to src/providers/claude/pricing.ts`,
         );
       }
       this.logHookEvent(
@@ -120,7 +119,7 @@ export class GenerateCommand {
 
       // Parse transcript
       spinner.text = "Parsing transcript...";
-      const transcriptData = await this.transcriptParser.parseTranscript(
+      const transcriptData = await this.provider.parseTranscript(
         transcriptPath,
         actualSessionId,
       );

@@ -2,9 +2,10 @@ import { readFile, readdir } from "fs/promises";
 import { existsSync } from "fs";
 import { join, dirname, basename } from "path";
 import { priceFor, normalizeModelId } from "./pricing.js";
-import { expandHome } from "../utils/paths.js";
-import type { TranscriptMessage } from "../types/transcript.js";
-import type { SessionUsage, ModelBreakdown } from "../types/session.js";
+import { displayModelName } from "./model-names.js";
+import { expandHome } from "../../utils/paths.js";
+import type { TranscriptMessage } from "./transcript-format.js";
+import type { SessionUsage, ModelBreakdown } from "../../types/session.js";
 
 interface ModelTotals {
   inputTokens: number;
@@ -75,6 +76,7 @@ export class UsageCalculator {
 
       breakdowns.push({
         modelName: model,
+        displayName: displayModelName(model),
         inputTokens: t.inputTokens,
         outputTokens: t.outputTokens,
         cacheCreationTokens: t.cacheCreationTokens,
@@ -90,6 +92,7 @@ export class UsageCalculator {
       totalInput + totalOutput + totalCacheCreate + totalCacheRead;
 
     return {
+      provider: "claude",
       sessionId,
       inputTokens: totalInput,
       outputTokens: totalOutput,

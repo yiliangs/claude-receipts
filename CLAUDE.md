@@ -43,11 +43,11 @@ SessionEnd Hook
   ↓ (stdin with session_id, transcript_path)
 GenerateCommand
   ↓
-SessionFinder (only if manual mode — scans ~/.claude/projects/)
-  ↓
-UsageCalculator (reads JSONL, prices via pricing.ts)
-  + TranscriptParser (reads JSONL for metadata)
-  ↓
+SessionProvider (ClaudeProvider — the provider seam, see below)
+  ├─ findSession (only if manual mode — scans ~/.claude/projects/)
+  ├─ calculateUsage (reads JSONL, prices via providers/claude/pricing.ts)
+  └─ parseTranscript (reads JSONL for metadata)
+  ↓ (normalized SessionUsage + ParsedTranscript)
 ReceiptGenerator (text) + HtmlRenderer (styled HTML)
   ↓
 LogbookWriter writes one JSON shard to logbook.d/<session_id>.json
@@ -75,12 +75,30 @@ subprocess, no indexer-lag retries. Hook finishes in ~1s on the fast path.
 - `setup.ts` - Modifies `~/.claude/settings.json` to install SessionEnd hook
 - `config.ts` - Manages user configuration at `~/.claude-receipts.config.json`
 
-**Core Logic** (`src/core/`)
+**Providers** (`src/providers/`)
 
-- `usage-calculator.ts` - Reads transcript JSONL, sums per-model usage, prices via `pricing.ts`, returns `SessionUsage`
-- `pricing.ts` - Static per-million-token price table for Claude models; verified against historical ccusage output. Update when new models ship.
-- `session-finder.ts` - Manual-mode discovery: scans `~/.claude/projects/**/*.jsonl` by UUID prefix or mtime
-- `transcript-parser.ts` - Parses `~/.claude/projects/[path].jsonl` for session metadata (slug, timestamps, message counts)
+The provider seam (`src/types/provider.ts`): everything upstream of
+`SessionUsage`/`ParsedTranscript` — session discovery, transcript wire
+format, billing-event summation, price table — is provider-specific and
+lives under `src/providers/<name>/`. Everything downstream (renderers,
+logbook, portal) consumes only the normalized shapes and must stay
+provider-neutral; the `provider` field on `SessionUsage` and the logbook
+shard is the discriminator (shards written before 2026-07-09 lack it —
+consumers default to `"claude"`). A future Codex provider is a new directory
+implementing `SessionProvider`; nothing downstream changes. The hook trigger
+(detach shim, setup) is deliberately NOT behind the seam — it's per-host-tool
+and the shim must stay builtins-only.
+
+- `claude/provider.ts` - `ClaudeProvider`, the façade `GenerateCommand` talks to
+- `claude/usage-calculator.ts` - Reads transcript JSONL, sums per-model usage, prices via `pricing.ts`, returns `SessionUsage`
+- `claude/pricing.ts` - Static per-million-token price table for Claude models; verified against historical ccusage output. Update when new models ship.
+- `claude/model-names.ts` - Model id → display name (keep in sync with the price table)
+- `claude/session-finder.ts` - Manual-mode discovery: scans `~/.claude/projects/**/*.jsonl` by UUID prefix or mtime
+- `claude/transcript-parser.ts` - Parses `~/.claude/projects/[path].jsonl` for session metadata (slug, timestamps, message counts)
+- `claude/transcript-format.ts` - The Claude Code JSONL wire-format types
+
+**Core Logic** (`src/core/`) — provider-neutral
+
 - `receipt-generator.ts` - Creates ASCII text receipt with Claude logo, location, costs
 - `html-renderer.ts` - Generates standalone HTML with embedded CSS (thermal printer aesthetic)
 - `logbook-writer.ts` - Writes one JSON shard per session to `<receiptsRoot>/logbook.d/<session_id>.json`. That directory is the **single source of truth** for spend: the portal and the terminal statusline both sum it with the same end-time/UTC-window rule, so their totals agree by design. The legacy shared `logbook.csv` was folded in on 2026-07-04 (`scripts/migrate-csv-to-shards.mjs`) — never revive a second source; consumers do not merge.
@@ -113,7 +131,7 @@ subprocess, no indexer-lag retries. Hook finishes in ~1s on the fast path.
 **Usage Calculation**
 
 - The transcript JSONL is canonical: every assistant message carries `message.usage` (input/output/cache_creation/cache_read tokens) plus `message.model`
-- Per-model accumulators feed `pricing.ts` to compute cost
+- Per-model accumulators feed `providers/claude/pricing.ts` to compute cost
 - 5-minute vs 1-hour cache TTL is not distinguished in the JSONL — we price all cache writes at the 5-minute rate (1.25× input); 1h-only sessions underbill by ≤12% of cache-write cost (typically <2% of total)
 - Unknown models bill at $0 and surface via `getUnknownModels()` → logged to `hook.log` so stale price tables are visible
 
@@ -146,8 +164,9 @@ subprocess, no indexer-lag retries. Hook finishes in ~1s on the fast path.
 
 All types in `src/types/`:
 
-- `session.ts` - `SessionUsage` + `ModelBreakdown` shapes consumed by the renderers
-- `transcript.ts` - JSONL message structure and parsed summary
+- `provider.ts` - The `SessionProvider` interface + `FoundSession` (the seam)
+- `session.ts` - `SessionUsage` + `ModelBreakdown` + `ProviderName`, consumed by the renderers and logbook
+- `transcript.ts` - `ParsedTranscript`, the neutral metadata shape (wire formats live with their providers)
 - `config.ts` - Minimal user configuration
 - `session-hook.ts` - SessionEnd stdin JSON format
 
@@ -161,7 +180,7 @@ All types in `src/types/`:
 ## Known Constraints
 
 - Cannot output to console from SessionEnd hook (terminal already closed)
-- New Claude model launches require a `pricing.ts` entry — until added, sessions bill at $0 (logged as `pricing miss`)
+- New Claude model launches require a `providers/claude/pricing.ts` entry — until added, sessions bill at $0 (logged as `pricing miss`)
 - 5m vs 1h cache TTL is not distinguished in the transcript; cache writes are priced at the 5m rate
 - Browser auto-open uses platform-specific commands (`open`, `start`, `xdg-open`)
 - Windows and macOS are first-class platforms. `bin/run-hook.sh` and `portal/Claude-Receipts.command` must stay committed with the executable bit (100755) — a Windows checkout can't see the bit, and losing it breaks the hook/launcher on macOS with *permission denied* (SESSIONEND-HOOK-LOG invariant 8)

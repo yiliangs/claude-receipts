@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Manually regenerate a receipt for a given session ID + transcript path.
 // Bypasses stdin parsing (which is flaky to drive from Git Bash on Windows).
-import { UsageCalculator } from "../dist/core/usage-calculator.js";
-import { TranscriptParser } from "../dist/core/transcript-parser.js";
+import { UsageCalculator } from "../dist/providers/claude/usage-calculator.js";
+import { TranscriptParser } from "../dist/providers/claude/transcript-parser.js";
 import { HtmlRenderer } from "../dist/core/html-renderer.js";
 import { ImageRenderer } from "../dist/core/image-renderer.js";
 import { ReceiptGenerator } from "../dist/core/receipt-generator.js";

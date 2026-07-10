@@ -1,5 +1,6 @@
 import { hostname } from "os";
 import type { ReceiptData } from "./receipt-generator.js";
+import type { ModelBreakdown } from "../types/session.js";
 import type { WeatherSnapshot } from "../utils/weather.js";
 import {
   formatCurrency,
@@ -7,7 +8,6 @@ import {
   formatDateTime,
   formatDuration,
 } from "../utils/formatting.js";
-import { displayModelName } from "./model-names.js";
 
 export class HtmlRenderer {
   /**
@@ -379,7 +379,7 @@ export class HtmlRenderer {
       for (const model of data.sessionData.modelBreakdowns) {
         // Model name with its subtotal cost
         html += `<div class="model-header">
-          <span class="model-name">${this.escapeHtml(this.getModelName(model.modelName))}</span>
+          <span class="model-name">${this.escapeHtml(this.modelLabel(model))}</span>
           <span class="model-cost">${formatCurrency(model.cost)}</span>
         </div>`;
 
@@ -425,10 +425,10 @@ export class HtmlRenderer {
   }
 
   /**
-   * Get clean model name
+   * Display name for a model line — set by the provider, id as fallback.
    */
-  private getModelName(model: string): string {
-    return displayModelName(model);
+  private modelLabel(model: ModelBreakdown): string {
+    return model.displayName ?? model.modelName;
   }
 
   /**
@@ -439,11 +439,11 @@ export class HtmlRenderer {
       data.sessionData.modelBreakdowns &&
       data.sessionData.modelBreakdowns.length > 0
     ) {
-      return this.getModelName(data.sessionData.modelBreakdowns[0].modelName);
+      return this.modelLabel(data.sessionData.modelBreakdowns[0]);
     }
 
     if (data.sessionData.modelsUsed && data.sessionData.modelsUsed.length > 0) {
-      return this.getModelName(data.sessionData.modelsUsed[0]);
+      return data.sessionData.modelsUsed[0];
     }
 
     return "Claude";

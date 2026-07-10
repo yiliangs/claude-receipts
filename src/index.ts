@@ -1,7 +1,8 @@
 // Main exports for the package
-export { UsageCalculator } from "./core/usage-calculator.js";
-export { SessionFinder } from "./core/session-finder.js";
-export { TranscriptParser } from "./core/transcript-parser.js";
+export { ClaudeProvider } from "./providers/claude/provider.js";
+export { UsageCalculator } from "./providers/claude/usage-calculator.js";
+export { SessionFinder } from "./providers/claude/session-finder.js";
+export { TranscriptParser } from "./providers/claude/transcript-parser.js";
 export { ReceiptGenerator } from "./core/receipt-generator.js";
 export { ConfigManager } from "./core/config-manager.js";
 export { LocationDetector } from "./utils/location.js";
@@ -13,10 +14,13 @@ export {
 } from "./utils/receipts-root.js";
 
 // Type exports
-export type { SessionUsage, ModelBreakdown } from "./types/session.js";
 export type {
-  TranscriptMessage,
-  ParsedTranscript,
-} from "./types/transcript.js";
+  SessionUsage,
+  ModelBreakdown,
+  ProviderName,
+} from "./types/session.js";
+export type { SessionProvider, FoundSession } from "./types/provider.js";
+export type { ParsedTranscript } from "./types/transcript.js";
+export type { TranscriptMessage } from "./providers/claude/transcript-format.js";
 export type { ReceiptConfig } from "./types/config.js";
 export type { SessionEndHookData } from "./types/session-hook.js";

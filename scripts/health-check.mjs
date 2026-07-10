@@ -18,7 +18,7 @@
  *   RED  pricing misses in hook.log in the last 7 days (models billing $0 NOW)
  *   YEL  zero-cost shards with nonzero tokens (pricing-miss residue; regen if
  *        the transcript still exists)
- *   YEL  shard models missing from src/core/pricing.ts (after normalization)
+ *   YEL  shard models missing from src/providers/claude/pricing.ts (after normalization)
  *   YEL  receipts on Drive with no shard, beyond the known-lost baseline
  *   YEL  a machine that used to write shards has gone quiet > 14 days
  *   YEL  token-column arithmetic mismatches
@@ -86,14 +86,14 @@ if (existsSync(HOOK_LOG)) {
   });
   let tableNow = new Set();
   try {
-    const distPricing = readFileSync(new URL("../dist/core/pricing.js", import.meta.url), "utf8");
+    const distPricing = readFileSync(new URL("../dist/providers/claude/pricing.js", import.meta.url), "utf8");
     tableNow = new Set([...distPricing.matchAll(/"(claude-[^"]+)":\s*\{/g)].map((m) => m[1]));
   } catch { /* dist not built — treat all misses as live */ }
   const live = recent.filter((l) => {
     const m = l.match(/models=([^\s]+)/);
     return !(m && tableNow.has(m[1]));
   });
-  if (live.length) fail(`${live.length} UNRESOLVED pricing miss(es) in the last 7 days — add the model to src/core/pricing.ts, run npm run build, regen the sessions:\n     ` + live.slice(-3).join("\n     "));
+  if (live.length) fail(`${live.length} UNRESOLVED pricing miss(es) in the last 7 days — add the model to src/providers/claude/pricing.ts, run npm run build, regen the sessions:\n     ` + live.slice(-3).join("\n     "));
   else if (recent.length) warn(`${recent.length} pricing miss(es) in the last 7 days, model since added to the table — verify the affected session(s) were regenerated`);
   else ok("no pricing misses in last 7 days");
 } else warn(`hook.log not found at ${HOOK_LOG}`);
@@ -111,7 +111,7 @@ if (zc.length) {
 
 // ---- models vs pricing table ----
 try {
-  const pricingSrc = readFileSync(new URL("../src/core/pricing.ts", import.meta.url), "utf8");
+  const pricingSrc = readFileSync(new URL("../src/providers/claude/pricing.ts", import.meta.url), "utf8");
   const known = new Set([...pricingSrc.matchAll(/"(claude-[^"]+)":\s*\{/g)].map((m) => m[1]));
   const norm = (m) => m.replace(/\[[^\]]*\]$/, "").replace(/-\d{8}$/, "");
   const unk = new Set();
@@ -122,7 +122,7 @@ try {
     }
   }
   unk.size ? warn(`models not in pricing table: ${[...unk].join(", ")}`) : ok("all shard models priced");
-} catch { warn("could not read src/core/pricing.ts (run from repo root)"); }
+} catch { warn("could not read src/providers/claude/pricing.ts (run from repo root)"); }
 
 // ---- orphan receipts ----
 const prefixes = new Set(shards.map((s) => String(s.session_id).slice(0, 8)));

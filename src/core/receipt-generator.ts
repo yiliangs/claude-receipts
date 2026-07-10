@@ -1,5 +1,5 @@
 import { hostname } from "os";
-import type { SessionUsage } from "../types/session.js";
+import type { SessionUsage, ModelBreakdown } from "../types/session.js";
 import type { ParsedTranscript } from "../types/transcript.js";
 import type { ReceiptConfig } from "../types/config.js";
 import type { WeatherSnapshot } from "../utils/weather.js";
@@ -10,7 +10,6 @@ import {
   formatDuration,
 } from "../utils/formatting.js";
 import { getHeader, SEPARATOR, LIGHT_SEPARATOR } from "../utils/ascii-art.js";
-import { displayModelName } from "./model-names.js";
 
 export interface ReceiptData {
   sessionData: SessionUsage;
@@ -62,7 +61,7 @@ export class ReceiptGenerator {
       data.sessionData.modelBreakdowns.length > 0
     ) {
       for (const model of data.sessionData.modelBreakdowns) {
-        lines.push(this.getModelName(model.modelName));
+        lines.push(this.modelLabel(model));
 
         // Input tokens
         lines.push(
@@ -254,10 +253,10 @@ export class ReceiptGenerator {
   }
 
   /**
-   * Get a clean model name
+   * Display name for a model line — set by the provider, id as fallback.
    */
-  private getModelName(model: string): string {
-    return displayModelName(model);
+  private modelLabel(model: ModelBreakdown): string {
+    return model.displayName ?? model.modelName;
   }
 
   /**
@@ -265,11 +264,11 @@ export class ReceiptGenerator {
    */
   private getMainModel(sessionData: SessionUsage): string {
     if (sessionData.modelBreakdowns && sessionData.modelBreakdowns.length > 0) {
-      return this.getModelName(sessionData.modelBreakdowns[0].modelName);
+      return this.modelLabel(sessionData.modelBreakdowns[0]);
     }
 
     if (sessionData.modelsUsed && sessionData.modelsUsed.length > 0) {
-      return this.getModelName(sessionData.modelsUsed[0]);
+      return sessionData.modelsUsed[0];
     }
 
     return "Claude";

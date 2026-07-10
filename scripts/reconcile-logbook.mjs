@@ -64,7 +64,7 @@ const LOG = logArg ? logArg.slice("--logbook=".length) : defaultLogbook();
 const projectsRoot = join(home, ".claude", "projects");
 
 // --- load the compiled, subagent-aware calculator -------------------------
-const calcPath = join(repoRoot, "dist", "core", "usage-calculator.js");
+const calcPath = join(repoRoot, "dist", "providers", "claude", "usage-calculator.js");
 if (!existsSync(calcPath)) {
   console.error(`dist not built: ${calcPath}\nRun \`npm run build\` first.`);
   process.exit(1);

@@ -1,10 +1,8 @@
 import { readFile } from "fs/promises";
 import { existsSync } from "fs";
-import { expandHome } from "../utils/paths.js";
-import type {
-  TranscriptMessage,
-  ParsedTranscript,
-} from "../types/transcript.js";
+import { expandHome } from "../../utils/paths.js";
+import type { TranscriptMessage } from "./transcript-format.js";
+import type { ParsedTranscript } from "../../types/transcript.js";
 
 export class TranscriptParser {
   /**

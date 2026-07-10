@@ -1,13 +1,7 @@
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
-import { homeDir } from "../utils/paths.js";
-
-export interface FoundSession {
-  sessionId: string;
-  transcriptPath: string;
-  projectPath: string;
-  mtimeMs: number;
-}
+import { homeDir } from "../../utils/paths.js";
+import type { FoundSession } from "../../types/provider.js";
 
 /**
  * Locate a session's transcript file by walking ~/.claude/projects/*\/*.jsonl.
