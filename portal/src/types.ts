@@ -8,7 +8,6 @@ export interface RawSession {
   branch: string
   cwd: string
   machine: string
-  location: string
   start: string // ISO 8601
   end: string | null
   durSec: number
@@ -40,6 +39,7 @@ export type RangeKey = '7d' | '14d' | '30d' | '90d' | 'all'
 
 export interface Filters {
   range: RangeKey
+  providers: Set<string>
   projects: Set<string>
   machines: Set<string>
   models: Set<string> // model-family keys (opus / sonnet / haiku / fable / other)

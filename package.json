@@ -1,7 +1,7 @@
 {
-  "name": "claude-receipts",
-  "version": "1.1.0",
-  "description": "Bring receipts from your Claude Code sessions",
+  "name": "agent-usage-stat",
+  "version": "2.0.0",
+  "description": "A local usage analytics portal for Claude Code and Codex",
   "license": "MIT",
   "author": "Yiliang Shao <github.com/yiliangs>",
   "contributors": [
@@ -9,32 +9,38 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/yiliangs/claude-receipts.git"
+    "url": "git+https://github.com/yiliangs/agent-usage-stat.git"
   },
   "bugs": {
-    "url": "https://github.com/yiliangs/claude-receipts/issues"
+    "url": "https://github.com/yiliangs/agent-usage-stat/issues"
   },
-  "homepage": "https://github.com/yiliangs/claude-receipts#readme",
+  "homepage": "https://github.com/yiliangs/agent-usage-stat#readme",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "claude-receipts": "./bin/claude-receipts.js"
+    "agent-usage-stat": "bin/agent-usage-stat.js"
   },
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "portal/scripts",
+    "screenshot.png"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/clean-dist.mjs && tsc && npm run build:portal",
+    "build:portal": "npm --prefix portal run build",
     "dev": "tsc --watch",
     "prepublishOnly": "npm run build",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npm run build && node --test test/*.test.mjs"
   },
   "keywords": [
     "claude-code",
-    "receipt",
+    "codex",
+    "openai",
     "usage",
+    "analytics",
+    "dashboard",
     "ai",
     "cli"
   ],
@@ -42,17 +48,12 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "boxen": "^8.0.1",
     "chalk": "^5.6.2",
     "commander": "^14.0.2",
-    "date-fns": "^4.1.0",
-    "date-fns-tz": "^3.2.0",
-    "geoip-lite": "^1.4.10",
     "ora": "^9.1.0",
     "prompts": "^2.4.2"
   },
   "devDependencies": {
-    "@types/geoip-lite": "^1.4.4",
     "@types/node": "^24.1.0",
     "@types/prompts": "^2.4.9",
     "typescript": "^5.9.3"

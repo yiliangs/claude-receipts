@@ -1,8 +1,7 @@
 import chalk from "chalk";
 import { ConfigManager } from "../core/config-manager.js";
-import { LocationDetector } from "../utils/location.js";
-import { resolveReceiptsRoot } from "../utils/receipts-root.js";
-import type { ReceiptConfig } from "../types/config.js";
+import { resolveUsageRoot } from "../utils/usage-root.js";
+import type { AppConfig } from "../types/config.js";
 
 export interface ConfigOptions {
   show?: boolean;
@@ -15,111 +14,32 @@ export class ConfigCommand {
 
   async execute(options: ConfigOptions): Promise<void> {
     try {
-      // Show config
-      if (options.show) {
-        await this.showConfig();
-        return;
-      }
-
-      // Reset config
-      if (options.reset) {
-        await this.resetConfig();
-        return;
-      }
-
-      // Set config value
-      if (options.set) {
-        await this.setConfig(options.set);
-        return;
-      }
-
-      // Default: show config
-      await this.showConfig();
+      if (options.reset) await this.configManager.resetConfig();
+      else if (options.set) await this.setConfig(options.set);
+      else await this.showConfig();
     } catch (error) {
-      if (error instanceof Error) {
-        console.error(chalk.red(`Error: ${error.message}`));
-      } else {
-        console.error(chalk.red("An unknown error occurred"));
-      }
-      process.exit(1);
+      const message = error instanceof Error ? error.message : "Unknown error";
+      console.error(chalk.red(`Error: ${message}`));
+      process.exitCode = 1;
     }
   }
 
-  /**
-   * Display current configuration
-   */
   private async showConfig(): Promise<void> {
     const config = await this.configManager.loadConfig();
-    const configPath = this.configManager.getConfigPath();
-
-    console.log(chalk.cyan.bold("\nClaude Receipts Configuration"));
-    console.log(chalk.gray(`Location: ${configPath}\n`));
-
-    const { root, source } = resolveReceiptsRoot(config);
-    this.printConfigItem("Version", config.version);
-    this.printConfigItem("Location", config.location || "(auto-detect)");
-    this.printConfigItem("Timezone", config.timezone || "(system default)");
-    this.printConfigItem(
-      "Receipts root",
-      source === "config" ? root : `${root} (${source})`,
-    );
-
-    console.log("");
+    const { root, source } = resolveUsageRoot(config);
+    console.log(chalk.cyan.bold("\nAgent Usage Stat"));
+    console.log(chalk.gray(this.configManager.getConfigPath()));
+    console.log(`\n  Data root  ${source === "config" ? root : `${root} (${source})`}\n`);
   }
 
-  /**
-   * Set a configuration value
-   */
-  private async setConfig(setValue: string): Promise<void> {
-    const [key, ...valueParts] = setValue.split("=");
-    const value = valueParts.join("=").trim();
-
-    if (!key || !value) {
-      throw new Error("Invalid format. Use: --set key=value");
+  private async setConfig(expression: string): Promise<void> {
+    const [rawKey, ...parts] = expression.split("=");
+    const key = rawKey?.trim() as keyof AppConfig;
+    const value = parts.join("=").trim();
+    if (key !== "dataRoot" || !value) {
+      throw new Error('Use --set dataRoot="<path>"');
     }
-
-    const trimmedKey = key.trim() as keyof ReceiptConfig;
-
-    // Validate key
-    const validKeys: (keyof ReceiptConfig)[] = [
-      "location",
-      "timezone",
-      "receiptsRoot",
-    ];
-
-    if (!validKeys.includes(trimmedKey)) {
-      throw new Error(
-        `Invalid config key: ${trimmedKey}. Valid keys: ${validKeys.join(", ")}`,
-      );
-    }
-
-    if (trimmedKey === "location" && LocationDetector.looksLikePath(value)) {
-      throw new Error(
-        `Invalid location "${value}": looks like a filesystem path. ` +
-          `Location should be a city/region (e.g. "Chicago, IL"). ` +
-          `To change where receipts are saved, set receiptsRoot instead ` +
-          `(e.g. claude-receipts config --set receiptsRoot="<your Google Drive mount>/claude-receipts").`,
-      );
-    }
-
-    // Update config
-    await this.configManager.updateConfig(trimmedKey, value);
-
-    console.log(chalk.green(`✓ Updated ${trimmedKey} = ${value}`));
-  }
-
-  /**
-   * Reset configuration to defaults
-   */
-  private async resetConfig(): Promise<void> {
-    await this.configManager.resetConfig();
-    console.log(chalk.green("✓ Configuration reset to defaults"));
-  }
-
-  /**
-   * Print a config item
-   */
-  private printConfigItem(label: string, value: string): void {
-    console.log(`  ${chalk.bold(label.padEnd(20))} ${value}`);
+    await this.configManager.updateConfig(key, value);
+    console.log(chalk.green(`Data root updated: ${value}`));
   }
 }

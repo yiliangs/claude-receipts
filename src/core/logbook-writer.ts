@@ -1,9 +1,14 @@
 import { mkdirSync } from "fs";
-import { writeFile, readFile } from "fs/promises";
+import { writeFile, readFile, open, stat, unlink } from "fs/promises";
 import { join } from "path";
 import { hostname } from "os";
-import { formatDuration } from "../utils/formatting.js";
-import type { ReceiptData } from "./receipt-generator.js";
+import type { SessionUsage } from "../types/session.js";
+import type { ParsedTranscript } from "../types/transcript.js";
+
+export interface UsageRecordData {
+  sessionData: SessionUsage;
+  transcriptData: ParsedTranscript;
+}
 
 /**
  * One column-named record per session, the JSON shard's shape. Field names
@@ -19,7 +24,6 @@ export interface LogbookRecord {
   branch: string;
   cwd: string;
   machine: string;
-  location: string;
   start_time: string;
   end_time: string;
   duration_seconds: number;
@@ -42,14 +46,12 @@ export interface LogbookRecord {
  * Why per-session files instead of one append-only logbook.csv: the logbook
  * lives on Google Drive File Stream and is shared across machines. Appending
  * rewrites the whole shared file, and Drive resolves any version skew with
- * last-writer-wins — silently dropping rows that lose the race (receipts, being
- * unique new files, never conflicted, which is why they always survived while
- * logbook rows sporadically vanished). Giving every session its own uniquely
- * named file removes the conflict surface entirely.
+ * last-writer-wins, silently dropping rows that lose the race. Giving every
+ * session its own uniquely named file removes the conflict surface entirely.
  *
  * A resumed session fires SessionEnd more than once with the same id and grown
  * usage; re-writing the same-named shard keeps one record holding the latest
- * figures. The portal's build-data merges these shards with the legacy CSV.
+ * figures. The portal reads these shards directly through its data build step.
  */
 export class LogbookWriter {
   static readonly SHARD_DIR = "logbook.d";
@@ -57,34 +59,120 @@ export class LogbookWriter {
   /**
    * Write this session's shard and return its path. Throws on failure — the
    * old single CSV writer swallowed every error, which is exactly how the data
-   * loss stayed invisible. The caller logs the outcome and must not let a
-   * logbook failure block receipt rendering.
+   * loss stayed invisible. The caller logs the outcome.
    */
-  async append(root: string, data: ReceiptData): Promise<string> {
+  async append(root: string, data: UsageRecordData): Promise<string> {
     const dir = join(root, LogbookWriter.SHARD_DIR);
     mkdirSync(dir, { recursive: true });
 
-    const record = this.buildRecord(data);
+    let record = this.buildRecord(data);
     const base =
       record.session_id ||
       `${record.session_slug || "session"}-${record.end_time}`;
     const name = base.replace(/[^A-Za-z0-9._-]/g, "_");
     const path = join(dir, `${name}.json`);
 
-    await writeFile(path, JSON.stringify(record, null, 2), "utf-8");
+    return this.withShardLock(path, async () => {
+      record = await this.preserveRecordedUsage(path, record);
+      await writeFile(path, JSON.stringify(record, null, 2), "utf-8");
 
-    // Read the bytes back: Drive can accept a write and later revert it, and a
-    // unique new file is the case that has always persisted, so a mismatch here
-    // is a real red flag worth surfacing rather than trusting the write blind.
-    const back = JSON.parse(await readFile(path, "utf-8")) as LogbookRecord;
-    if (back.session_id !== record.session_id) {
-      throw new Error(`shard verify mismatch for ${name}.json`);
-    }
-    return path;
+      // Read the bytes back: Drive can accept a write and later revert it, and a
+      // unique new file is the case that has always persisted, so a mismatch here
+      // is a real red flag worth surfacing rather than trusting the write blind.
+      const back = JSON.parse(await readFile(path, "utf-8")) as LogbookRecord;
+      if (back.session_id !== record.session_id) {
+        throw new Error(`shard verify mismatch for ${name}.json`);
+      }
+      return path;
+    });
   }
 
-  private buildRecord(data: ReceiptData): LogbookRecord {
-    const { sessionData, transcriptData, location } = data;
+  /** Serialize detached workers that update the same rollout shard. */
+  private async withShardLock<T>(
+    path: string,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    const lockPath = `${path}.lock`;
+    let handle;
+
+    for (let attempt = 0; attempt < 100; attempt++) {
+      try {
+        handle = await open(lockPath, "wx");
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        await this.removeStaleLock(lockPath);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+
+    if (!handle) {
+      throw new Error(`timed out waiting for shard lock: ${lockPath}`);
+    }
+
+    try {
+      return await action();
+    } finally {
+      await handle.close();
+      try {
+        await unlink(lockPath);
+      } catch {
+        // Another process may already have cleaned up a stale lock.
+      }
+    }
+  }
+
+  private async removeStaleLock(lockPath: string): Promise<void> {
+    try {
+      const info = await stat(lockPath);
+      if (Date.now() - info.mtimeMs <= 30_000) return;
+      await unlink(lockPath);
+    } catch {
+      // The owner released it between our failed open and this check.
+    }
+  }
+
+  /**
+   * Detached hook workers can finish out of order. Never let an older partial
+   * rollout replace a later, larger usage snapshot for the same session.
+   */
+  private async preserveRecordedUsage(
+    path: string,
+    next: LogbookRecord,
+  ): Promise<LogbookRecord> {
+    let existing: LogbookRecord;
+    try {
+      existing = JSON.parse(await readFile(path, "utf-8")) as LogbookRecord;
+    } catch {
+      return next;
+    }
+
+    if (
+      existing.session_id !== next.session_id ||
+      (existing.provider || "claude") !== next.provider
+    ) {
+      return next;
+    }
+
+    const regressed =
+      next.total_tokens < existing.total_tokens ||
+      next.total_cost_usd < existing.total_cost_usd;
+    if (!regressed) return next;
+
+    return {
+      ...next,
+      input_tokens: existing.input_tokens,
+      output_tokens: existing.output_tokens,
+      cache_creation_tokens: existing.cache_creation_tokens,
+      cache_read_tokens: existing.cache_read_tokens,
+      total_tokens: existing.total_tokens,
+      total_cost_usd: existing.total_cost_usd,
+      models: existing.models,
+    };
+  }
+
+  private buildRecord(data: UsageRecordData): LogbookRecord {
+    const { sessionData, transcriptData } = data;
     const durationMs =
       transcriptData.endTime.getTime() - transcriptData.startTime.getTime();
     const durationSec = Math.max(0, Math.floor(durationMs / 1000));
@@ -98,14 +186,10 @@ export class LogbookWriter {
       branch: transcriptData.gitBranch || "",
       cwd: transcriptData.cwd || "",
       machine: hostname(),
-      location: location || "",
       start_time: transcriptData.startTime.toISOString(),
       end_time: transcriptData.endTime.toISOString(),
       duration_seconds: durationSec,
-      duration_human: formatDuration(
-        transcriptData.startTime,
-        transcriptData.endTime,
-      ),
+      duration_human: formatDuration(durationSec),
       input_tokens: sessionData.inputTokens ?? 0,
       output_tokens: sessionData.outputTokens ?? 0,
       cache_creation_tokens: sessionData.cacheCreationTokens ?? 0,
@@ -116,4 +200,12 @@ export class LogbookWriter {
       provider: sessionData.provider,
     };
   }
+}
+
+function formatDuration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  if (hours > 0) return `${hours}h ${minutes % 60}m`;
+  if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+  return `${seconds}s`;
 }

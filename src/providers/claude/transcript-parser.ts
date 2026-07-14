@@ -28,7 +28,7 @@ export class TranscriptParser {
     // Parse line by line, skipping any that don't parse. A transcript read
     // while Claude Code is still writing it — or one left with a partial final
     // line by a worker killed mid-write — has a malformed line; a bare
-    // .map(JSON.parse) would throw and lose the entire receipt AND the logbook
+    // .map(JSON.parse) would throw and lose the entire session record
     // row (usage is computed first, append happens after this). One bad line
     // must not sink the session. Mirrors usage-calculator's per-line guard.
     const messages: TranscriptMessage[] = [];

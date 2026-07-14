@@ -26,8 +26,8 @@ import { dirname, join, resolve } from "node:path";
 const APPLY = process.argv.includes("--apply");
 const home = process.env.USERPROFILE || process.env.HOME || "";
 const CSV = existsSync("H:/My Drive")
-  ? "H:/My Drive/claude-receipts/logbook.csv"
-  : join(home, ".claude-receipts", "projects", "logbook.csv");
+  ? "H:/My Drive/agent-usage-stat/logbook.csv"
+  : join(home, ".agent-usage-stat", "projects", "logbook.csv");
 const SHARD_DIR = resolve(dirname(CSV), "logbook.d");
 
 if (!existsSync(CSV)) {

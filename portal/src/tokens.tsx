@@ -1,4 +1,4 @@
-/* Claude Receipts — Tokens: composition, cache efficiency, where they go. */
+/* Agent Usage Stat — Tokens: composition, cache efficiency, where they go. */
 import { useState, useMemo } from 'react'
 import { LH } from './data'
 import { LHA } from './agg'

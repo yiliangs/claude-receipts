@@ -1,4 +1,4 @@
-/* Claude Receipts — Projects: one row per project, fully detailed.
+/* Agent Usage Stat — Projects: one row per project, fully detailed.
    Click a row → filter to that project and jump to the Sessions explorer. */
 import { useState, useMemo } from 'react'
 import { LH } from './data'

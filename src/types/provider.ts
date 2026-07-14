@@ -2,9 +2,9 @@
 //
 // Everything upstream of SessionUsage/ParsedTranscript is provider-specific:
 // where sessions live on disk, the transcript wire format, how billing events
-// are summed, and the price table. Everything downstream — receipt/HTML
-// renderers, logbook writer, portal — consumes only the normalized shapes and
-// must stay provider-neutral. A new provider (e.g. Codex) is a new directory
+// are summed, and the price table. Everything downstream, including the
+// shard writer and portal consumes only the normalized shapes and
+// must stay provider-neutral. A new provider is a new directory
 // under src/providers/ implementing this interface; nothing downstream
 // changes except reading the `provider` discriminator.
 //

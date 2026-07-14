@@ -1,5 +1,5 @@
 /* ============================================================
-   Claude Receipts — usage ledger (dark), full-bleed analytics app
+   Agent Usage Stat — usage ledger (dark), full-bleed analytics app
    Ledger language ported from the Natalie LogHub theme.
    Helvetica Neue = UI, Geist Mono = data. Lime is indicators only — never fills.
    ============================================================ */
@@ -213,12 +213,12 @@ button{ font-family:inherit; }
   background:#0e0e0e; font-family:var(--mono); font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--txt2); }
 .tbl-foot b{ color:var(--txt0); font-weight:500; }
 
-/* model chip (used in tables + receipt) */
+/* model chip */
 .mchip{ display:inline-flex; align-items:center; gap:5px; font-family:var(--mono); font-size:10px; letter-spacing:.02em;
   color:var(--txt1); padding:2px 7px 2px 6px; border-radius:5px; border:1px solid var(--border-default); white-space:nowrap; }
 .mchip .d{ width:7px; height:7px; border-radius:50%; flex:0 0 auto; }
 
-/* ── drilldown panel (slides over) — the "receipt" ── */
+/* session detail drawer */
 .scrim{ position:fixed; inset:0; background:rgba(8,8,8,.55); backdrop-filter:blur(2px); z-index:90; opacity:0;
   pointer-events:none; transition:opacity .2s; }
 .scrim.on{ opacity:1; pointer-events:auto; }
@@ -235,25 +235,24 @@ button{ font-family:inherit; }
 .drawer-x:hover{ color:var(--txt0); border-color:var(--border-component); }
 .drawer-bd{ flex:1; min-height:0; overflow-y:auto; padding:22px; }
 
-/* paper receipt inside the drawer */
-.receipt{ background:#F4F1EA; color:#15130F; border-radius:6px; padding:24px 26px 30px; font-family:var(--mono);
-  box-shadow:0 18px 50px rgba(0,0,0,.55); position:relative;
-  -webkit-mask:radial-gradient(7px at 7px 50%,transparent 96%,#000) left/100% 16px repeat-y; }
-.receipt .rc-logo{ text-align:center; font-weight:600; letter-spacing:.22em; font-size:13px; margin-bottom:2px; }
-.receipt .rc-sub{ text-align:center; font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:#6b675e; }
-.receipt .rc-rule{ border:0; border-top:1px dashed #15130F44; margin:14px 0; }
-.receipt .rc-row{ display:flex; justify-content:space-between; gap:14px; font-size:11.5px; line-height:2.0; }
-.receipt .rc-row .k{ color:#6b675e; text-transform:uppercase; letter-spacing:.04em; font-size:9.5px; }
-.receipt .rc-row .v{ color:#15130F; text-align:right; max-width:60%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.receipt .rc-line{ display:flex; justify-content:space-between; gap:14px; font-size:11.5px; line-height:1.95; }
-.receipt .rc-line .v{ font-variant-numeric:tabular-nums; }
-.receipt .rc-total{ display:flex; justify-content:space-between; align-items:baseline; margin-top:4px; }
-.receipt .rc-total .k{ font-weight:600; letter-spacing:.08em; font-size:12px; }
-.receipt .rc-total .v{ font-weight:600; font-size:20px; font-variant-numeric:tabular-nums; }
-.receipt .rc-models{ display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; justify-content:flex-end; }
-.receipt .rc-mtag{ font-size:9.5px; padding:2px 7px; border-radius:999px; border:1px solid #15130F22; color:#15130F; }
-.receipt .rc-foot{ text-align:center; font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; color:#6b675e; margin-top:16px; }
-.receipt .rc-barcode{ height:34px; margin-top:14px; background:repeating-linear-gradient(90deg,#15130F 0 2px,transparent 2px 4px,#15130F 4px 5px,transparent 5px 9px); opacity:.82; }
+.session-detail{ display:flex; flex-direction:column; gap:18px; }
+.session-detail .sd-top{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.session-detail .provider-badge{ border:1px solid var(--border-component); border-radius:999px; padding:4px 9px;
+  color:var(--txt1); font-family:var(--mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase; }
+.session-detail .provider-badge.codex{ border-color:#356D67; color:#82C6BE; }
+.session-detail .sd-cost{ color:var(--lime); font-family:var(--mono); font-size:24px; font-variant-numeric:tabular-nums; }
+.session-detail h2{ margin:0; color:var(--txt0); font-family:var(--mono); font-size:20px; font-weight:500; overflow-wrap:anywhere; }
+.session-detail .sd-project{ margin:-12px 0 0; color:var(--txt2); font-size:12px; }
+.session-detail section{ border:1px solid var(--border-subtle); border-radius:9px; padding:14px 16px; background:var(--bg1); }
+.session-detail h3{ margin:0 0 10px; color:var(--txt2); font-family:var(--mono); font-size:10px; font-weight:500;
+  letter-spacing:.1em; text-transform:uppercase; }
+.session-detail .sd-row{ display:flex; justify-content:space-between; gap:18px; padding:5px 0; font-size:12px; }
+.session-detail .sd-row .k{ color:var(--txt2); }
+.session-detail .sd-row .v{ color:var(--txt0); max-width:65%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right; }
+.session-detail .sd-models{ display:flex; flex-wrap:wrap; gap:6px; }
+.session-detail .sd-models span{ border:1px solid var(--border-default); border-radius:6px; padding:4px 7px; color:var(--txt1);
+  font-family:var(--mono); font-size:10px; }
+.session-detail .sd-id{ color:var(--txt-disabled); font-family:var(--mono); font-size:10px; overflow-wrap:anywhere; }
 
 /* zero / empty state */
 .zero{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; padding:40px 20px;

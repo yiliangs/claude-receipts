@@ -1,4 +1,4 @@
-/* Claude Receipts — shared view UI primitives. */
+/* Agent Usage Stat — shared view UI primitives. */
 import React from 'react'
 import { LHC } from './charts'
 

@@ -1,6 +1,6 @@
-/* Claude Receipts — Session Explorer (virtualized table). Click a row → receipt. */
+/* Agent Usage Stat session explorer. */
 import { useState, useRef, useMemo, useLayoutEffect } from 'react'
-import { LH, modelShort } from './data'
+import { LH, familyOf, modelShort } from './data'
 
 const fmt = LH.fmt
 const ROW_H = 40
@@ -21,7 +21,7 @@ function ModelsCell({ s }: any) {
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
       <span style={{ display: 'inline-flex', gap: 2 }}>
         {s.models.slice(0, 4).map((m: string, i: number) => {
-          const fam = LH.FAM_BY[require_fam(m)]
+          const fam = LH.FAM_BY[familyOf(m)]
           return <span key={i} style={{ width: 7, height: 7, borderRadius: '50%', background: fam?.color || 'var(--txt2)' }} />
         })}
       </span>
@@ -32,16 +32,6 @@ function ModelsCell({ s }: any) {
     </span>
   )
 }
-// lightweight family resolver (avoids importing agg just for one helper)
-function require_fam(model: string): string {
-  const m = (model || '').toLowerCase()
-  if (m.includes('opus')) return 'opus'
-  if (m.includes('sonnet')) return 'sonnet'
-  if (m.includes('haiku')) return 'haiku'
-  if (m.includes('fable')) return 'fable'
-  return 'other'
-}
-
 export function Sessions({ sessions, openSession }: any) {
   const [sort, setSort] = useState({ key: 'start', dir: -1 })
   const [scrollTop, setScrollTop] = useState(0)

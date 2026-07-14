@@ -11,27 +11,25 @@ import { tmpdir } from "os";
 import { randomBytes } from "crypto";
 import { spawn } from "child_process";
 import { logHookEvent } from "../utils/hook-log.js";
-import type { SessionEndHookData } from "../types/session-hook.js";
+import type { HookData } from "../types/session-hook.js";
 
 /**
- * The slice of generate options the shim needs to forward to the worker.
- * Declared locally (not imported from generate.ts) so this module's import
- * graph stays limited to Node built-ins — that is the whole point of the shim.
+ * The capture options the shim needs to forward to the worker.
+ * Declared locally so this module's import graph stays limited to Node
+ * built-ins. Fast startup is the whole point of the shim.
  */
 export interface DetachShimOptions {
-  output?: string[];
-  location?: string;
+  provider?: string;
+  quiet?: boolean;
 }
 
 /**
  * Shim path: read stdin synchronously, write it to a temp file, spawn the real
  * worker as a detached child, exit. The shim deliberately avoids config
- * loading, usage calc, network, puppeteer — and, critically, even *importing*
- * the modules that do them. generate.ts pulls in geoip-lite, date-fns, and the
- * rest of the renderer graph (~1.8s of module-load time on Windows); paying
- * that here would push the worker spawn past Claude Code's SessionEnd teardown
- * on /exit, which kills the still-starting hook ("hook cancelled") before it
- * can spawn anything. Importing only built-ins keeps the shim at ~0.3s so the
+ * loading, transcript parsing, and usage calculation. Importing those modules
+ * here would push the worker spawn past Claude Code's SessionEnd teardown on
+ * /exit, which kills the still-starting hook ("hook cancelled") before it can
+ * spawn anything. Importing only built-ins keeps the shim at ~0.3s so the
  * detached worker is launched well inside the teardown window. The worker reads
  * the temp file and unlinks it when done.
  */
@@ -54,11 +52,14 @@ export function runDetachShim(options: DetachShimOptions): void {
 
   // Skip non-interactive sessions. Headless SDK / `claude -p` runs (e.g.
   // background automations) each end with reason=other and would otherwise
-  // spam a receipt — plus a browser tab, PNG, PDF, and logbook row — for
-  // every invocation. They're identified by the transcript's entrypoint
+  // record automation probes as real interactive work. They are identified
+  // by the transcript's entrypoint
   // ("sdk-cli"); interactive runs report "cli". Override with
-  // CLAUDE_RECEIPTS_ALL_SESSIONS=1.
-  if (!process.env.CLAUDE_RECEIPTS_ALL_SESSIONS) {
+  // AGENT_USAGE_STAT_ALL_SESSIONS=1.
+  if (
+    hookEventName(raw) === "SessionEnd" &&
+    !process.env.AGENT_USAGE_STAT_ALL_SESSIONS
+  ) {
     const entrypoint = hookTranscriptEntrypoint(raw);
     if (entrypoint && entrypoint.startsWith("sdk")) {
       logHookEvent(`shim skip: non-interactive entrypoint=${entrypoint}`);
@@ -68,7 +69,7 @@ export function runDetachShim(options: DetachShimOptions): void {
 
   const tmpFile = join(
     tmpdir(),
-    `claude-receipts-hook-${Date.now()}-${randomBytes(4).toString("hex")}.json`,
+    `agent-usage-stat-hook-${Date.now()}-${randomBytes(4).toString("hex")}.json`,
   );
 
   try {
@@ -79,12 +80,12 @@ export function runDetachShim(options: DetachShimOptions): void {
     return;
   }
 
-  const args = [process.argv[1], "generate", "--input-file", tmpFile];
-  if (options.output && options.output.length > 0) {
-    args.push("--output", options.output.join(","));
+  const args = [process.argv[1], "capture", "--input-file", tmpFile];
+  if (options.provider) {
+    args.push("--provider", options.provider);
   }
-  if (options.location) {
-    args.push("--location", options.location);
+  if (options.quiet) {
+    args.push("--quiet");
   }
 
   try {
@@ -112,14 +113,13 @@ export function runDetachShim(options: DetachShimOptions): void {
  * report "cli"; headless SDK runs report "sdk-cli". Only the first chunk is
  * read — these transcripts can be hundreds of MB. Returns null when it can't
  * be determined (missing file, unparseable JSON, entrypoint not in the head)
- * so the caller errs toward generating the receipt rather than dropping a
- * real one.
+ * so the caller errs toward recording usage rather than dropping a real one.
  */
 function hookTranscriptEntrypoint(rawHookJson: string): string | null {
   let transcriptPath: string | undefined;
   try {
-    transcriptPath = (JSON.parse(rawHookJson) as SessionEndHookData)
-      .transcript_path;
+    transcriptPath =
+      (JSON.parse(rawHookJson) as HookData).transcript_path || undefined;
   } catch {
     return null;
   }
@@ -143,5 +143,13 @@ function hookTranscriptEntrypoint(rawHookJson: string): string | null {
         // ignore close errors
       }
     }
+  }
+}
+
+function hookEventName(rawHookJson: string): string | null {
+  try {
+    return (JSON.parse(rawHookJson) as HookData).hook_event_name || null;
+  } catch {
+    return null;
   }
 }

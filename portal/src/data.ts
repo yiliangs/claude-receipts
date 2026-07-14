@@ -1,6 +1,6 @@
 /* ============================================================
-   Claude Receipts — data layer (artifact loader)
-   Loads public/data/sessions.json (built from logbook.csv by
+   Agent Usage Stat — data layer (artifact loader)
+   Loads data/sessions.json (built from per-session usage shards by
    scripts/build-data.mjs), normalizes it into the in-memory shape the
    rest of the app expects, and exposes the LH singleton (the ES-module
    equivalent of a global). All aggregation is client-side over this array.
@@ -25,6 +25,11 @@ const FAMS: FamDef[] = [
   { key: 'sonnet', label: 'Sonnet', color: '#8FB0D4', border: '#3F5E7E' },
   { key: 'haiku', label: 'Haiku', color: '#A8DDB8', border: '#4E8A63' },
   { key: 'fable', label: 'Fable', color: '#B6A0CE', border: '#5B4A6E' },
+  { key: 'sol', label: 'Sol', color: '#9BC7A5', border: '#42694A' },
+  { key: 'terra', label: 'Terra', color: '#D5B47A', border: '#735A2F' },
+  { key: 'luna', label: 'Luna', color: '#94B6D8', border: '#405F7D' },
+  { key: 'codex', label: 'Codex', color: '#82C6BE', border: '#356D67' },
+  { key: 'gpt', label: 'GPT', color: '#A9B0B8', border: '#525A63' },
   { key: 'other', label: 'Other', color: '#BFBBB0', border: '#5F5A50' },
 ]
 const FAM_BY: Record<string, FamDef> = {}
@@ -36,10 +41,22 @@ export function familyOf(model: string): string {
   if (m.includes('sonnet')) return 'sonnet'
   if (m.includes('haiku')) return 'haiku'
   if (m.includes('fable')) return 'fable'
+  if (m.endsWith('-sol')) return 'sol'
+  if (m.endsWith('-terra')) return 'terra'
+  if (m.endsWith('-luna')) return 'luna'
+  if (m.includes('codex')) return 'codex'
+  if (m.includes('gpt-')) return 'gpt'
   return 'other'
 }
 // pretty short label for a full model id (claude-opus-4-8 -> Opus 4.8)
 export function modelShort(model: string): string {
+  const gptTier = /^gpt-([\d.]+)-(sol|terra|luna|codex)$/i.exec(model)
+  if (gptTier) {
+    const tier = gptTier[2]
+    return `${gptTier[1]} ${tier.charAt(0).toUpperCase()}${tier.slice(1)}`
+  }
+  if (/^gpt-/i.test(model)) return model.replace(/^gpt-/i, 'GPT ')
+  if (model === 'codex-auto-review') return 'Auto Review'
   const m = (model || '').replace(/^claude-/, '').replace(/\[.*\]$/, '')
   const parts = m.split('-')
   const name = parts.shift() || m
@@ -133,7 +150,6 @@ export interface LHShape {
   SESSIONS: LSession[]
   PROJECTS: string[]
   MACHINES: string[]
-  LOCATIONS: string[]
   FAMS: FamDef[]
   FAM_BY: Record<string, FamDef>
   TOKENS: TokDef[]
@@ -150,7 +166,6 @@ export const LH: LHShape = {
   SESSIONS: [],
   PROJECTS: [],
   MACHINES: [],
-  LOCATIONS: [],
   FAMS,
   FAM_BY,
   TOKENS,
@@ -205,13 +220,11 @@ export async function loadData(): Promise<void> {
 
   const PROJECTS = Array.from(new Set(sessions.map((s) => s.project))).filter(Boolean).sort((a, b) => a.localeCompare(b))
   const MACHINES = Array.from(new Set(sessions.map((s) => s.machine))).filter(Boolean).sort()
-  const LOCATIONS = Array.from(new Set(sessions.map((s) => s.location))).filter(Boolean).sort()
 
   LH.SESSIONS.length = 0
   LH.SESSIONS.push(...sessions)
   LH.PROJECTS = PROJECTS
   LH.MACHINES = MACHINES
-  LH.LOCATIONS = LOCATIONS
   LH.BUILD = BUILD
   LH.SPAN = SPAN
   LH.startOfWindow = startOfWindow

@@ -1,5 +1,5 @@
 /* ============================================================
-   Claude Receipts — custom SVG charts (ledger aesthetic)
+   Agent Usage Stat — custom SVG charts (ledger aesthetic)
    Hand-built, no libs. Mono labels, hairline grids, muted fills.
    Ported from the Natalie LogHub chart kit; Histogram generalized to
    take an x-axis formatter (cost distribution, not just durations).

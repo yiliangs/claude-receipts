@@ -1,5 +1,5 @@
 /* ============================================================
-   Claude Receipts — aggregation engine
+   Agent Usage Stat — aggregation engine
    Pure functions over the in-memory session array. Everything the views
    need is derived here so cross-filtering is instant. Reads LH.* at call
    time so the async-loaded data is always current.
@@ -9,7 +9,7 @@
    (and tokens) to its PRIMARY model family (first model id listed). Token-
    TYPE rollups (input/output/cache) are exact — those columns are per session.
    ============================================================ */
-import { LH } from './data'
+import { LH, familyOf } from './data'
 
 function windowFor(range: string) {
   const DAY = LH.DAY
@@ -28,15 +28,16 @@ function windowFor(range: string) {
 function applyFilters(f: any) {
   const win = windowFor(f.range)
   const q = (f.search || '').trim().toLowerCase()
-  const useP = f.projects.size, useM = f.machines.size, useF = f.models.size
+  const useR = f.providers?.size || 0, useP = f.projects.size, useM = f.machines.size, useF = f.models.size
   const out: any[] = []
   const S = LH.SESSIONS
   for (let i = 0; i < S.length; i++) {
     const s = S[i]
     if (s.t < win.start || s.t > win.end) continue
+    if (useR && !f.providers.has(s.provider)) continue
     if (useP && !f.projects.has(s.project)) continue
     if (useM && !f.machines.has(s.machine)) continue
-    if (useF && !s.models.some((m: string) => f.models.has(famOf(m)))) continue
+    if (useF && !s.models.some((m: string) => f.models.has(familyOf(m)))) continue
     if (
       q &&
       !(
@@ -51,15 +52,6 @@ function applyFilters(f: any) {
     out.push(s)
   }
   return out
-}
-
-function famOf(model: string): string {
-  const m = (model || '').toLowerCase()
-  if (m.includes('opus')) return 'opus'
-  if (m.includes('sonnet')) return 'sonnet'
-  if (m.includes('haiku')) return 'haiku'
-  if (m.includes('fable')) return 'fable'
-  return 'other'
 }
 
 // ---- time bucketing ----
@@ -265,7 +257,7 @@ function biggestSessions(sessions: any[], n = 12) {
 export const LHA = {
   windowFor,
   applyFilters,
-  famOf,
+  famOf: familyOf,
   buckets,
   bucketIndex,
   totals,

@@ -53,11 +53,11 @@ const COL = { sessionId: 2, machine: 6, input: 12, output: 13, cacheC: 14, cache
 
 /**
  * The canonical Drive logbook this repo's author writes to (via the config
- * `receiptsRoot`). Pass --logbook=<path> to point at a different receipts root.
+ * `dataRoot`). Pass --logbook=<path> to point at a different data root.
  */
 function defaultLogbook() {
-  if (existsSync("H:/My Drive")) return "H:/My Drive/claude-receipts/logbook.csv";
-  return join(home, ".claude-receipts", "projects", "logbook.csv");
+  if (existsSync("H:/My Drive")) return "H:/My Drive/agent-usage-stat/logbook.csv";
+  return join(home, ".agent-usage-stat", "projects", "logbook.csv");
 }
 const logArg = args.find((a) => a.startsWith("--logbook="));
 const LOG = logArg ? logArg.slice("--logbook=".length) : defaultLogbook();

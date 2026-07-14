@@ -1,5 +1,5 @@
-/* Claude Receipts — app shell: header, search, nav rail, cross-filter state,
-   receipt drawer. Loads the logbook artifact once; all aggregation is client-side. */
+/* Agent Usage Stat — app shell: header, search, nav rail, cross-filter state,
+   session detail drawer. Loads the usage artifact once; all aggregation is client-side. */
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { LH, loadData } from './data'
 import { LHA } from './agg'
@@ -26,21 +26,22 @@ const RANGES: [string, string][] = [
   ['all', 'ALL'],
 ]
 const HEADS: Record<string, [string, string]> = {
-  overview: ['Spend Overview', 'How much has Claude Code cost, and where is it going?'],
+  overview: ['Spend Overview', 'What is the API-equivalent cost, and where is it going?'],
   spend: ['Spend', 'Where the money goes — by project, model, machine, and session.'],
   tokens: ['Tokens', 'Token composition and how much work the cache is saving.'],
   projects: ['Projects', 'One row per project — spend, tokens, and activity at a glance.'],
-  sessions: ['Session Explorer', 'Every receipt in the ledger — filter, sort, open.'],
+  sessions: ['Session Explorer', 'Every recorded session, ready to filter, sort, and inspect.'],
 }
 
 // prev-period filter (same dims, previous window) for KPI deltas
 function applyPrev(f: any) {
   const win = LHA.windowFor(f.range)
   const q = (f.search || '').trim().toLowerCase()
-  const useP = f.projects.size, useM = f.machines.size, useF = f.models.size
+  const useR = f.providers?.size || 0, useP = f.projects.size, useM = f.machines.size, useF = f.models.size
   const out: any[] = []
   for (const s of LH.SESSIONS) {
     if (s.t < win.prevStart || s.t >= win.prevEnd) continue
+    if (useR && !f.providers.has(s.provider)) continue
     if (useP && !f.projects.has(s.project)) continue
     if (useM && !f.machines.has(s.machine)) continue
     if (useF && !s.models.some((m: string) => f.models.has(LHA.famOf(m)))) continue
@@ -60,6 +61,7 @@ export function App() {
   const [view, setView] = useState('overview')
   const [filters, setFilters] = useState({
     range: '30d',
+    providers: new Set<string>(),
     projects: new Set<string>(),
     machines: new Set<string>(),
     models: new Set<string>(),
@@ -109,7 +111,7 @@ export function App() {
       next.has(value) ? next.delete(value) : next.add(value)
       return { ...f, [dim]: next }
     })
-  const clearAll = () => set({ projects: new Set(), machines: new Set(), models: new Set(), search: '' })
+  const clearAll = () => set({ providers: new Set(), projects: new Set(), machines: new Set(), models: new Set(), search: '' })
 
   const win = useMemo(() => LHA.windowFor(filters.range), [filters.range, ready])
   const bks = useMemo(() => LHA.buckets(win), [win])
@@ -169,7 +171,7 @@ export function App() {
   filters.models.forEach((k) => activeChips.push({ dim: 'models', value: k, label: LH.FAM_BY[k]?.label || k, sw: LH.FAM_BY[k]?.color, ck: 'Model' }))
   filters.projects.forEach((p) => activeChips.push({ dim: 'projects', value: p, label: p, ck: 'Project' }))
   filters.machines.forEach((m) => activeChips.push({ dim: 'machines', value: m, label: m, ck: 'Machine' }))
-  const hasFilters = activeChips.length > 0 || filters.search
+  const hasFilters = filters.providers.size > 0 || activeChips.length > 0 || filters.search
 
   const viewEl = (() => {
     switch (view) {
@@ -193,7 +195,7 @@ export function App() {
       <div className="brandcell"><div className="mk"><Mark /></div></div>
 
       <div className="head">
-        <span className="title"><b>CLAUDE</b>Receipts</span>
+        <span className="title"><b>AGENT</b>Usage Stat</span>
         <span className="sp" />
         <div className="gsearch">
           <span className="ic"><LHI.Search s={14} /></span>
@@ -257,8 +259,25 @@ export function App() {
             ))}
           </div>
           <span className="fb-sep" />
+          <span className="fb-lab">Provider</span>
+          <div className="daterange">
+            {[
+              ['', 'ALL'],
+              ['claude', 'CLAUDE'],
+              ['codex', 'CODEX'],
+            ].map(([key, label]) => (
+              <button
+                key={label}
+                className={(key === '' ? filters.providers.size === 0 : filters.providers.has(key)) ? 'on' : ''}
+                onClick={() => set({ providers: key ? new Set([key]) : new Set() })}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="fb-sep" />
           <span className="fb-lab">Filters</span>
-          {activeChips.length === 0 && !filters.search && (
+          {filters.providers.size === 0 && activeChips.length === 0 && !filters.search && (
             <span className="chip empty"><span className="ck">none · click any chart element</span></span>
           )}
           {filters.search && (

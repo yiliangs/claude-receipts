@@ -1,10 +1,9 @@
-// Session usage shape consumed by the receipt renderers and the logbook.
+// Session usage shape consumed by the shard writer and portal.
 // Produced by a provider (src/types/provider.ts) — provider-neutral on the
 // way out: renderers and the logbook writer never branch on the provider.
 
-/** Which tool's sessions a usage record came from. Extends when a new
- *  provider lands (e.g. | "codex"). */
-export type ProviderName = "claude";
+/** Which host tool produced the session. */
+export type ProviderName = "claude" | "codex";
 
 export interface ModelBreakdown {
   /** Normalized model id — aggregation key, logbook `models` entry. */

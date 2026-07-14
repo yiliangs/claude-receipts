@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
 import { configFilePath } from "../utils/paths.js";
-import type { ReceiptConfig } from "../types/config.js";
+import type { AppConfig } from "../types/config.js";
 import { DEFAULT_CONFIG } from "../types/config.js";
 
 export class ConfigManager {
@@ -15,7 +15,7 @@ export class ConfigManager {
   /**
    * Load configuration from file or return defaults
    */
-  async loadConfig(): Promise<ReceiptConfig> {
+  async loadConfig(): Promise<AppConfig> {
     if (!existsSync(this.configPath)) {
       return DEFAULT_CONFIG;
     }
@@ -35,7 +35,7 @@ export class ConfigManager {
   /**
    * Save configuration to file
    */
-  async saveConfig(config: ReceiptConfig): Promise<void> {
+  async saveConfig(config: AppConfig): Promise<void> {
     const configDir = join(this.configPath, "..");
 
     // Ensure directory exists
@@ -49,7 +49,7 @@ export class ConfigManager {
   /**
    * Update a specific config value
    */
-  async updateConfig(key: keyof ReceiptConfig, value: unknown): Promise<void> {
+  async updateConfig(key: keyof AppConfig, value: unknown): Promise<void> {
     const config = await this.loadConfig();
     (config as any)[key] = value;
     await this.saveConfig(config);

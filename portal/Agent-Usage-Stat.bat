@@ -1,7 +1,7 @@
 @echo off
-title Claude Receipts - Usage Portal
+title Agent Usage Stat - Usage Portal
 REM ====================================================================
-REM  Claude Receipts - Usage Portal - one-click launcher
+REM  Agent Usage Stat - Usage Portal - one-click launcher
 REM
 REM  Double-click this file. It clears any old portal server, refreshes the
 REM  data from the Drive logbook, starts the local viewer, and opens your
@@ -11,9 +11,9 @@ REM
 REM  IMPORTANT: the portal lives at http://localhost:4179 (this launcher).
 REM  Do NOT bookmark http://localhost:4173 - that is a stale built preview.
 REM
-REM  Data source: the receipts root from ~/.claude-receipts.config.json,
-REM  else an auto-detected Google Drive mount (dist/utils/receipts-root.js).
-REM  Override:     set CLAUDE_RECEIPTS_LOGBOOK=path\to\receipts-root
+REM  Data source: the data root from ~/.agent-usage-stat.config.json,
+REM  else an auto-detected Google Drive mount (dist/utils/usage-root.js).
+REM  Override:     set AGENT_USAGE_STAT_DATA_ROOT=path\to\data-root
 REM ====================================================================
 cd /d "%~dp0"
 
@@ -45,7 +45,7 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr "LISTENING" ^| findstr ":4173
 
 echo.
 echo  Refreshing data from the Drive logbook...
-set "CLAUDE_RECEIPTS_REQUIRE_SOURCE=1"
+set "AGENT_USAGE_STAT_REQUIRE_SOURCE=1"
 call npm run data --silent
 if errorlevel 1 (
   echo.
@@ -54,10 +54,10 @@ if errorlevel 1 (
   echo  to pick up the newest sessions.
   echo.
 )
-set "CLAUDE_RECEIPTS_REQUIRE_SOURCE="
+set "AGENT_USAGE_STAT_REQUIRE_SOURCE="
 
 echo.
-echo  Starting Claude Receipts portal...
+echo  Starting Agent Usage Stat portal...
 echo  Your browser will open automatically at http://localhost:4179
 echo  Close this window to stop the server.
 echo.

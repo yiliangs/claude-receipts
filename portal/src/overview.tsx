@@ -1,4 +1,4 @@
-/* Claude Receipts — Overview (flagship). Spend health at a glance. */
+/* Agent Usage Stat — Overview (flagship). Spend health at a glance. */
 import { useState, useMemo } from 'react'
 import { LH } from './data'
 import { LHA } from './agg'
@@ -101,7 +101,7 @@ export function Overview({ sessions, prevSessions, win, bks, filters, toggleFilt
           />
         </LHU.Card>
 
-        <LHU.Card title="Biggest Receipts" hint="by cost · click to open">
+        <LHU.Card title="Highest-Cost Sessions" hint="by cost · click to open">
           <LHU.HList
             rows={big.map((s: any, i: number) => ({
               key: s._i,

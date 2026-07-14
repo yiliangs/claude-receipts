@@ -2,18 +2,18 @@ import { mkdirSync, appendFileSync } from "fs";
 import { join } from "path";
 
 /**
- * Append a one-line event to ~/.claude-receipts/hook.log. Fails silently so
+ * Append a one-line event to ~/.agent-usage-stat/hook.log. Fails silently so
  * logging never breaks the hook. The log is the only window into hook
- * behavior — SessionEnd has no console.
+ * behavior because SessionEnd has no console.
  *
  * Lives in its own module (Node built-ins only) so the detach shim can import
- * it without dragging in the heavy receipt-rendering graph. See detach-shim.ts.
+ * it without dragging in provider parsers or worker code. See detach-shim.ts.
  */
 export function logHookEvent(message: string): void {
   try {
     const home = process.env.HOME || process.env.USERPROFILE || "";
     if (!home) return;
-    const dir = join(home, ".claude-receipts");
+    const dir = join(home, ".agent-usage-stat");
     mkdirSync(dir, { recursive: true });
     const stamp = new Date().toISOString();
     appendFileSync(join(dir, "hook.log"), `[${stamp}] ${message}\n`, "utf-8");

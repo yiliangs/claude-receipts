@@ -2,63 +2,49 @@
 
 import { Command, Option } from "commander";
 
-// Command classes are imported lazily inside each action. generate.ts alone
-// pulls in geoip-lite + date-fns + the renderer graph (~1.8s of module-load
-// time). The SessionEnd hook's `generate --detach` shim must stay off that
-// graph so it can spawn its worker before Claude Code's exit teardown kills it
-// — so nothing heavy may be imported at the top of this file.
-
+// Commands are loaded lazily. The hook path must reach the detach shim without
+// loading provider parsers, the portal server, or any other worker code.
 const program = new Command();
 
-// Keep in sync with package.json.
 program
-  .name("claude-receipts")
-  .description("Generate quirky receipts for your Claude Code usage")
-  .version("1.1.0");
+  .name("agent-usage-stat")
+  .description("Explore Claude Code and Codex usage in a local portal")
+  .version("2.0.0");
 
-// Generate command
 program
-  .command("generate")
-  .description("Generate a receipt for a Claude Code session")
-  .option("-s, --session <id>", "Specific session ID to generate receipt for")
+  .command("capture")
+  .description("Record one Claude Code or Codex session")
+  .option("-s, --session <id>", "Specific session ID to record")
   .addOption(
-    new Option("-o, --output <format...>", "Output format(s): html, png, pdf, console (comma-separated or repeated)")
-      .argParser((value: string, prev: string[] | undefined) => {
-        const formats = value.split(",").map((s) => s.trim()).filter(Boolean);
-        const valid = ["html", "png", "pdf", "console"];
-        for (const f of formats) {
-          if (!valid.includes(f)) {
-            throw new Error(`Invalid output format "${f}". Valid formats: ${valid.join(", ")}`);
-          }
-        }
-        return [...(prev || []), ...formats];
-      }),
+    new Option("-p, --provider <provider>", "Session provider")
+      .choices(["claude", "codex"]),
   )
-  .option("-l, --location <text>", "Override location detection")
-  .option(
-    "--detach",
-    "Hook shim mode: read stdin, spawn a detached worker that does the actual work, exit immediately. Used in the SessionEnd hook so /clear and /exit can't kill mid-render children.",
-  )
-  .option(
-    "--input-file <path>",
-    "Read SessionEnd hook JSON from a file instead of stdin. Set automatically by --detach when respawning the worker; the worker deletes the file after reading.",
-  )
+  .option("--detach", "Spawn a detached capture worker and exit")
+  .option("--input-file <path>", "Read hook JSON from a file")
+  .option("--quiet", "Suppress console output")
   .action(async (options) => {
-    // Detach shim: built-ins-only path, no heavy imports. Must stay fast so
-    // the detached worker is spawned before Claude Code tears down the hook.
     if (options.detach) {
       const { runDetachShim } = await import("./commands/detach-shim.js");
       runDetachShim(options);
       return;
     }
-    const { GenerateCommand } = await import("./commands/generate.js");
-    await new GenerateCommand().execute(options);
+    const { CaptureCommand } = await import("./commands/capture.js");
+    await new CaptureCommand().execute(options);
   });
 
-// Config command
+program
+  .command("portal")
+  .description("Open the local usage portal")
+  .option("--port <number>", "Local server port", "4179")
+  .option("--no-open", "Start without opening a browser")
+  .action(async (options) => {
+    const { PortalCommand } = await import("./commands/portal.js");
+    await new PortalCommand().execute(options);
+  });
+
 program
   .command("config")
-  .description("Manage configuration")
+  .description("Show or change the data directory")
   .option("--show", "Display current configuration")
   .option("--set <key=value>", "Set a configuration value")
   .option("--reset", "Reset configuration to defaults")
@@ -67,19 +53,20 @@ program
     await new ConfigCommand().execute(options);
   });
 
-// Setup command
 program
   .command("setup")
-  .description("Setup automatic receipt generation via SessionEnd hook")
-  .option("--uninstall", "Remove the SessionEnd hook")
+  .description("Connect Claude Code and/or Codex")
+  .addOption(
+    new Option("-p, --provider <provider>", "Hooks to configure")
+      .choices(["claude", "codex", "all"])
+      .default("all"),
+  )
+  .option("--uninstall", "Remove the selected integration(s)")
   .action(async (options) => {
     const { SetupCommand } = await import("./commands/setup.js");
     await new SetupCommand().execute(options);
   });
 
-// Make generate the default command if no command is specified
-if (process.argv.length === 2) {
-  process.argv.push("generate");
-}
+if (process.argv.length === 2) process.argv.push("portal");
 
 program.parse();

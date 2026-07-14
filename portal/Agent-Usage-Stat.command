@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ====================================================================
-#  Claude Receipts - Usage Portal - one-click launcher (macOS)
+#  Agent Usage Stat - Usage Portal - one-click launcher (macOS)
 #
 #  Double-click this file in Finder (the Windows twin is
-#  Claude-Receipts.bat). It clears any old portal server, refreshes the
+#  Agent-Usage-Stat.bat). It clears any old portal server, refreshes the
 #  data from the shared logbook, starts the local viewer, and opens your
 #  browser automatically at http://localhost:4179.
 #  Keep the Terminal window open while using the portal; close it to stop.
@@ -11,9 +11,9 @@
 #  IMPORTANT: the portal lives at http://localhost:4179 (this launcher).
 #  Do NOT bookmark http://localhost:4173 - that is a stale built preview.
 #
-#  Data source: the receipts root from ~/.claude-receipts.config.json,
-#  else an auto-detected Google Drive mount (see dist/utils/receipts-root.js).
-#  Override:    CLAUDE_RECEIPTS_LOGBOOK=<receipts root dir>
+#  Data source: the data root from ~/.agent-usage-stat.config.json,
+#  else an auto-detected Google Drive mount (see dist/utils/usage-root.js).
+#  Override:    AGENT_USAGE_STAT_DATA_ROOT=<data root dir>
 # ====================================================================
 cd "$(dirname "$0")" || exit 1
 
@@ -52,7 +52,7 @@ done
 
 echo ""
 echo " Refreshing data from the shared logbook..."
-if ! CLAUDE_RECEIPTS_REQUIRE_SOURCE=1 npm run data --silent; then
+if ! AGENT_USAGE_STAT_REQUIRE_SOURCE=1 npm run data --silent; then
   echo ""
   echo " WARNING: could not refresh from the logbook - opening with the last"
   echo " saved snapshot. Check that Google Drive is mounted, then relaunch"
@@ -61,7 +61,7 @@ if ! CLAUDE_RECEIPTS_REQUIRE_SOURCE=1 npm run data --silent; then
 fi
 
 echo ""
-echo " Starting Claude Receipts portal..."
+echo " Starting Agent Usage Stat portal..."
 echo " Your browser will open automatically at http://localhost:4179"
 echo " Close this window to stop the server."
 echo ""

@@ -1,5 +1,5 @@
 {
-  "name": "claude-receipts-portal",
+  "name": "agent-usage-stat-portal",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -7,7 +7,7 @@
     "data": "node scripts/build-data.mjs",
     "predev": "node scripts/build-data.mjs",
     "dev": "vite",
-    "build": "node scripts/build-data.mjs && tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview --port 4173"
   },

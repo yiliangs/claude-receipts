@@ -1,4 +1,4 @@
-/* Claude Receipts — inline SVG icons. */
+/* Agent Usage Stat — inline SVG icons. */
 import React from 'react'
 
 const S = (p, vb?, sw?) => (props?) => {
@@ -31,7 +31,6 @@ export const LHI = {
   Search: S(['M7 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z', 'M14 14l-3.5-3.5']),
   Clock: S(['M8 14.5A6.5 6.5 0 1 0 8 1.5a6.5 6.5 0 0 0 0 13Z', 'M8 4.5V8l2.5 1.5']),
   Cpu: S(['M4.5 4.5h7v7h-7z', 'M6.5 1.5v2', 'M9.5 1.5v2', 'M6.5 12.5v2', 'M9.5 12.5v2', 'M1.5 6.5h2', 'M1.5 9.5h2', 'M12.5 6.5h2', 'M12.5 9.5h2']),
-  Receipt: S(['M3.5 1.8v12.4l1.7-1 1.4 1 1.4-1 1.4 1 1.4-1 1.7 1V1.8l-1.7 1-1.4-1-1.4 1-1.4-1-1.4 1-1.7-1Z', 'M6 5.5h4', 'M6 8h4']),
   Folders: S(['M8 1.7 14.5 5 8 8.3 1.5 5 8 1.7Z', 'M1.5 8 8 11.3 14.5 8', 'M1.5 11 8 14.3 14.5 11']),
   Close: S(['M3.5 3.5l9 9', 'M12.5 3.5l-9 9']),
   Chevron: S(['M5.5 3.5 10 8l-4.5 4.5']),

@@ -8,10 +8,10 @@ import ora from "ora";
 import { ConfigManager } from "../core/config-manager.js";
 import { homeDir } from "../utils/paths.js";
 import {
-  detectSharedReceiptsRoot,
-  resolveReceiptsRoot,
-} from "../utils/receipts-root.js";
-import type { ReceiptConfig } from "../types/config.js";
+  detectSharedUsageRoot,
+  resolveUsageRoot,
+} from "../utils/usage-root.js";
+import type { AppConfig } from "../types/config.js";
 
 interface ClaudeSettings {
   hooks?: {
@@ -26,26 +26,48 @@ interface ClaudeSettings {
   [key: string]: unknown;
 }
 
+interface CommandHook {
+  type: "command";
+  command: string;
+  commandWindows?: string;
+  timeout?: number;
+  statusMessage?: string;
+}
+
+interface CodexHooksFile {
+  hooks?: Record<
+    string,
+    Array<{
+      matcher?: string;
+      hooks: CommandHook[];
+    }>
+  >;
+  [key: string]: unknown;
+}
+
 export interface SetupOptions {
   uninstall?: boolean;
+  provider?: "claude" | "codex" | "all";
 }
 
 export class SetupCommand {
   private configManager = new ConfigManager();
   private settingsPath: string;
+  private codexHooksPath: string;
 
   constructor() {
     this.settingsPath = join(homeDir(), ".claude", "settings.json");
+    this.codexHooksPath = join(homeDir(), ".codex", "hooks.json");
   }
 
   async execute(options: SetupOptions): Promise<void> {
-    console.log(chalk.cyan.bold("\nClaude Receipts Setup\n"));
+    console.log(chalk.cyan.bold("\nAgent Usage Stat Setup\n"));
 
     try {
       if (options.uninstall) {
-        await this.uninstall();
+        await this.uninstall(options.provider || "all");
       } else {
-        await this.install();
+        await this.install(options.provider || "all");
       }
     } catch (error) {
       if (error instanceof Error) {
@@ -57,48 +79,29 @@ export class SetupCommand {
     }
   }
 
-  /**
-   * Install the SessionEnd hook
-   */
-  private async install(): Promise<void> {
-    // Start from the existing config so re-running setup never clobbers
-    // values set elsewhere (receiptsRoot, timezone).
+  /** Install the selected provider hooks. */
+  private async install(target: "claude" | "codex" | "all"): Promise<void> {
+    const installClaude = target === "claude" || target === "all";
+    const installCodex = target === "codex" || target === "all";
+    // Re-running setup preserves the configured data root.
     const existing = await this.configManager.loadConfig();
 
-    // When no receipts root is configured but another machine already
+    // When no data root is configured but another machine already
     // established a shared one on a Google Drive mount, offer to join it —
     // otherwise this machine silently forks onto the local default and its
     // sessions never reach the shared logbook.
-    const detectedRoot = existing.receiptsRoot?.trim()
+    const detectedRoot = existing.dataRoot?.trim()
       ? null
-      : detectSharedReceiptsRoot();
+      : detectSharedUsageRoot();
 
     // Prompt user for configuration
     const answers = await prompts([
-      {
-        type: "text",
-        name: "location",
-        message: "Default location (leave blank to auto-detect):",
-        initial: existing.location || "",
-      },
-      {
-        type: "multiselect",
-        name: "outputs",
-        message: "Output formats for the SessionEnd hook:",
-        choices: [
-          { title: "HTML (opens in browser)", value: "html", selected: true },
-          { title: "PNG image", value: "png", selected: true },
-          { title: "PDF", value: "pdf", selected: true },
-        ],
-        hint: "- Space to select, Enter to confirm",
-        instructions: false,
-      },
       ...(detectedRoot
         ? [
             {
               type: "confirm" as const,
               name: "useDetectedRoot",
-              message: `Shared receipts folder detected at ${detectedRoot} — write receipts + logbook there?`,
+              message: `Shared usage data found at ${detectedRoot}. Use it?`,
               initial: true,
             },
           ]
@@ -106,78 +109,74 @@ export class SetupCommand {
     ]);
 
     // User cancelled
-    if (answers.location === undefined || answers.outputs === undefined) {
+    if (detectedRoot && answers.useDetectedRoot === undefined) {
       console.log(chalk.yellow("\nSetup cancelled"));
       return;
     }
-
-    const outputs: string[] =
-      answers.outputs.length > 0 ? answers.outputs : ["html"];
 
     const spinner = ora("Setting up hook...").start();
 
     try {
       // Persisting the detected root pins it: resolution no longer depends
       // on the Drive mount being up at hook time.
-      const config: ReceiptConfig = {
+      const config: AppConfig = {
         ...existing,
-        location: answers.location || undefined,
         ...(detectedRoot && answers.useDetectedRoot
-          ? { receiptsRoot: detectedRoot }
+          ? { dataRoot: detectedRoot }
           : {}),
       };
 
       await this.configManager.saveConfig(config);
       spinner.text = "Config saved...";
 
-      // Modify settings.json
-      await this.addHookToSettings(outputs);
-      spinner.text = "Hook installed...";
+      if (installClaude) {
+        await this.addHookToSettings();
+      }
+      if (installCodex) {
+        await this.addCodexHooks();
+      }
+      spinner.text = "Hooks installed...";
 
       spinner.succeed("Setup complete!");
 
-      console.log(chalk.green("\n✓ SessionEnd hook installed"));
-      console.log(
-        chalk.gray(`  Outputs: ${outputs.join(", ")}`),
-      );
+      if (installClaude) {
+        console.log(chalk.green("\n✓ Claude SessionEnd hook installed"));
+      }
+      if (installCodex) {
+        console.log(chalk.green("\n✓ Codex Stop + SubagentStop hooks installed"));
+        console.log(
+          chalk.gray("  Behavior: silent per-turn usage updates"),
+        );
+        console.log(
+          chalk.gray("  In Codex, run /hooks once and trust the new hooks"),
+        );
+      }
       console.log(
         chalk.gray(`  Config file: ${this.configManager.getConfigPath()}\n`),
       );
 
-      const effectiveRoot = resolveReceiptsRoot(config).root;
-      const tips: string[] = [];
-      if (outputs.includes("html")) {
-        tips.push(
-          "HTML receipts will open in your browser when you exit Claude Code sessions",
-        );
-      }
-      if (outputs.includes("png")) {
-        tips.push(`PNG images will be saved to ${effectiveRoot}/<slug>.png`);
-      }
-      if (outputs.includes("pdf")) {
-        tips.push(`PDFs will be saved to ${effectiveRoot}/<slug>.pdf`);
-      }
-      tips.push(
-        'Change where receipts are saved with: claude-receipts config --set receiptsRoot="<path>"',
-      );
-      console.log(chalk.cyan(tips.join("\n") + "\n"));
+      const effectiveRoot = resolveUsageRoot(config).root;
+      console.log(chalk.cyan(`  Data root: ${effectiveRoot}\n`));
     } catch (error) {
       spinner.fail("Setup failed");
       throw error;
     }
   }
 
-  /**
-   * Uninstall the SessionEnd hook
-   */
-  private async uninstall(): Promise<void> {
+  /** Uninstall the selected provider hooks. */
+  private async uninstall(target: "claude" | "codex" | "all"): Promise<void> {
     const spinner = ora("Removing hook...").start();
 
     try {
-      await this.removeHookFromSettings();
-      spinner.succeed("Hook removed!");
+      if (target === "claude" || target === "all") {
+        await this.removeHookFromSettings();
+      }
+      if (target === "codex" || target === "all") {
+        await this.removeCodexHooks();
+      }
+      spinner.succeed("Hooks removed!");
 
-      console.log(chalk.green("\n✓ SessionEnd hook uninstalled"));
+      console.log(chalk.green(`\n✓ ${this.targetLabel(target)} hooks uninstalled`));
       console.log(
         chalk.gray(
           '  Config file preserved. Use "config --reset" to reset it.\n',
@@ -192,7 +191,7 @@ export class SetupCommand {
   /**
    * Add the SessionEnd hook to settings.json
    */
-  private async addHookToSettings(outputs: string[]): Promise<void> {
+  private async addHookToSettings(): Promise<void> {
     // Ensure .claude directory exists
     const claudeDir = join(this.settingsPath, "..");
     if (!existsSync(claudeDir)) {
@@ -249,14 +248,10 @@ export class SetupCommand {
       homeNorm && normalized.toLowerCase().startsWith(homeNorm.toLowerCase())
         ? "$HOME" + normalized.slice(homeNorm.length)
         : normalized;
-    // --detach makes the hook a thin shim: read stdin, spawn a detached
-    // worker, exit in <100ms. Without it, Claude Code's process-tree
-    // teardown on /exit (and shortened kill timer on /clear) truncates the
-    // hook mid-render — png/pdf almost always lost, occasionally even
-    // the usage log entry.
-    const hookCommand = `"${relPath}" generate --detach`;
+    // The thin shim detaches before Claude Code tears down the hook process.
+    const hookCommand = `"${relPath}" capture --detach --provider claude --quiet`;
     const existingHook = settings.hooks.SessionEnd.find((h) =>
-      h.hooks.some((hook) => hook.command.includes("claude-receipts")),
+      h.hooks.some((hook) => this.isOurCommand(hook.command)),
     );
 
     if (existingHook) {
@@ -264,17 +259,15 @@ export class SetupCommand {
       // Remove old hook
       settings.hooks.SessionEnd = settings.hooks.SessionEnd.filter(
         (h) =>
-          !h.hooks.some((hook) => hook.command.includes("claude-receipts")),
+          !h.hooks.some((hook) => this.isOurCommand(hook.command)),
       );
     }
 
-    // Add our hook
-    const outputArg = outputs.join(",");
     settings.hooks.SessionEnd.push({
       hooks: [
         {
           type: "command",
-          command: `${hookCommand} --output ${outputArg}`,
+          command: hookCommand,
         },
       ],
     });
@@ -292,7 +285,7 @@ export class SetupCommand {
    */
   private async removeHookFromSettings(): Promise<void> {
     if (!existsSync(this.settingsPath)) {
-      throw new Error("settings.json not found. Hook may not be installed.");
+      return;
     }
 
     const content = await readFile(this.settingsPath, "utf-8");
@@ -305,12 +298,12 @@ export class SetupCommand {
     }
 
     if (!settings.hooks?.SessionEnd) {
-      throw new Error("No SessionEnd hooks found in settings.json");
+      return;
     }
 
     // Remove our hook
     settings.hooks.SessionEnd = settings.hooks.SessionEnd.filter(
-      (h) => !h.hooks.some((hook) => hook.command.includes("claude-receipts")),
+      (h) => !h.hooks.some((hook) => this.isOurCommand(hook.command)),
     );
 
     // Remove SessionEnd array if empty
@@ -329,5 +322,126 @@ export class SetupCommand {
       JSON.stringify(settings, null, 2),
       "utf-8",
     );
+  }
+
+  /** Install silent, detached Codex updates. Stop is per turn, not per task. */
+  private async addCodexHooks(): Promise<void> {
+    const codexDir = join(this.codexHooksPath, "..");
+    await mkdir(codexDir, { recursive: true });
+
+    let config: CodexHooksFile = {};
+    if (existsSync(this.codexHooksPath)) {
+      const content = await readFile(this.codexHooksPath, "utf-8");
+      await writeFile(`${this.codexHooksPath}.backup`, content, "utf-8");
+      try {
+        config = JSON.parse(content);
+      } catch {
+        throw new Error(
+          "Failed to parse existing ~/.codex/hooks.json. Please check the file format.",
+        );
+      }
+    }
+
+    config.hooks ||= {};
+    const { unixWrapper, windowsBin } = this.hookExecutablePaths();
+    const args = "capture --detach --provider codex --quiet";
+    const handler: CommandHook = {
+      type: "command",
+      command: `"${unixWrapper}" ${args}`,
+      commandWindows: `node "${windowsBin}" ${args}`,
+      timeout: 30,
+      statusMessage: "Recording Codex usage",
+    };
+
+    for (const event of ["Stop", "SubagentStop"]) {
+      config.hooks[event] = this.withoutOurCodexHook(config.hooks[event] || []);
+      config.hooks[event].push({ hooks: [handler] });
+    }
+
+    await writeFile(
+      this.codexHooksPath,
+      JSON.stringify(config, null, 2),
+      "utf-8",
+    );
+  }
+
+  private async removeCodexHooks(): Promise<void> {
+    if (!existsSync(this.codexHooksPath)) return;
+
+    const content = await readFile(this.codexHooksPath, "utf-8");
+    let config: CodexHooksFile;
+    try {
+      config = JSON.parse(content);
+    } catch {
+      throw new Error("Failed to parse existing ~/.codex/hooks.json.");
+    }
+    if (!config.hooks) return;
+
+    for (const event of ["Stop", "SubagentStop"]) {
+      const remaining = this.withoutOurCodexHook(config.hooks[event] || []);
+      if (remaining.length > 0) config.hooks[event] = remaining;
+      else delete config.hooks[event];
+    }
+    if (Object.keys(config.hooks).length === 0) delete config.hooks;
+
+    await writeFile(
+      this.codexHooksPath,
+      JSON.stringify(config, null, 2),
+      "utf-8",
+    );
+  }
+
+  private withoutOurCodexHook(
+    groups: Array<{ matcher?: string; hooks: CommandHook[] }>,
+  ): Array<{ matcher?: string; hooks: CommandHook[] }> {
+    return groups
+      .map((group) => ({
+        ...group,
+        hooks: group.hooks.filter((hook) => {
+          const commands = `${hook.command} ${hook.commandWindows || ""}`;
+          return !(this.isOurCommand(commands) && commands.includes("--provider codex"));
+        }),
+      }))
+      .filter((group) => group.hooks.length > 0);
+  }
+
+  private hookExecutablePaths(): {
+    unixWrapper: string;
+    windowsBin: string;
+  } {
+    const wrapperPath = resolve(
+      fileURLToPath(import.meta.url),
+      "..",
+      "..",
+      "..",
+      "bin",
+      "run-hook.sh",
+    );
+    const binPath = resolve(
+      fileURLToPath(import.meta.url),
+      "..",
+      "..",
+      "..",
+      "bin",
+      "agent-usage-stat.js",
+    );
+    const homeNorm = homeDir().replace(/\\/g, "/");
+    const normalized = wrapperPath.replace(/\\/g, "/");
+    const unixWrapper =
+      homeNorm && normalized.toLowerCase().startsWith(homeNorm.toLowerCase())
+        ? "$HOME" + normalized.slice(homeNorm.length)
+        : normalized;
+    return { unixWrapper, windowsBin: binPath };
+  }
+
+  private targetLabel(target: "claude" | "codex" | "all"): string {
+    if (target === "claude") return "Claude SessionEnd";
+    if (target === "codex") return "Codex Stop + SubagentStop";
+    return "Claude and Codex";
+  }
+
+  /** Recognize this package's installed hooks. */
+  private isOurCommand(command: string): boolean {
+    return command.includes("agent-usage-stat");
   }
 }

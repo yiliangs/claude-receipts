@@ -39,6 +39,7 @@ export class UsageCalculator {
     transcriptPath: string,
     sessionId: string,
   ): Promise<SessionUsage> {
+    this.unknownModels.clear();
     const expanded = expandHome(transcriptPath);
     if (!existsSync(expanded)) {
       throw new Error(`Transcript file not found: ${transcriptPath}`);
@@ -105,7 +106,7 @@ export class UsageCalculator {
     };
   }
 
-  /** Models priced at $0 because we have no entry — generate.ts logs these. */
+  /** Models priced at $0 because we have no entry. capture.ts logs these. */
   getUnknownModels(): string[] {
     return [...this.unknownModels];
   }
@@ -180,7 +181,7 @@ export class UsageCalculator {
     try {
       content = await readFile(path, "utf-8");
     } catch {
-      // Subagent file vanished or unreadable — skip rather than fail the receipt.
+      // Subagent file vanished or unreadable, so skip it rather than fail capture.
       return;
     }
 
@@ -197,7 +198,7 @@ export class UsageCalculator {
         continue;
 
       // Synthetic messages aren't a real model — skip so they never reach the
-      // breakdown, the receipt line items, or the logbook `models` column.
+      // breakdown or the logbook `models` column.
       if (msg.message.model === SYNTHETIC_MODEL) continue;
 
       // Aggregate by normalized alias so "claude-opus-4-8", a dated snapshot,

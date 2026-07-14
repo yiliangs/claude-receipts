@@ -1,4 +1,4 @@
-/* Claude Receipts — Spend: where the money goes. */
+/* Agent Usage Stat — Spend: where the money goes. */
 import { useState, useMemo } from 'react'
 import { LH } from './data'
 import { LHA } from './agg'
@@ -45,7 +45,6 @@ export function Spend({ sessions, prevSessions, win, bks, openProject, openSessi
   const cumSpend = useMemo(() => LHA.cumulative(costSpark), [costSpark])
   const projs = useMemo(() => LHA.topProjects(sessions, 'cost').slice(0, 14), [sessions])
   const byMachine = useMemo(() => LHA.byDimCost(sessions, 'machine'), [sessions])
-  const byLoc = useMemo(() => LHA.byDimCost(sessions, 'location'), [sessions])
   const big = useMemo(() => LHA.biggestSessions(sessions, 8), [sessions])
   const costs = useMemo(() => sessions.map((s: any) => s.cost), [sessions])
 
@@ -95,7 +94,7 @@ export function Spend({ sessions, prevSessions, win, bks, openProject, openSessi
             onPick={(d: any) => openProject(d.full)}
           />
         </LHU.Card>
-        <LHU.Card title="Receipt Size Distribution" hint="per-session cost · p50 / p95">
+        <LHU.Card title="Session Cost Distribution" hint="per-session cost · p50 / p95">
           <div style={{ paddingTop: 18 }}>
             <LHC.Histogram
               values={costs}
@@ -111,10 +110,9 @@ export function Spend({ sessions, prevSessions, win, bks, openProject, openSessi
         </LHU.Card>
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: '1fr 1fr 1.1fr', marginTop: 14 }}>
+      <div className="grid" style={{ gridTemplateColumns: '1fr 1.1fr', marginTop: 14 }}>
         <DimDonut title="Spend by Machine" hint="which box" rows={byMachine} center="SPEND" />
-        <DimDonut title="Spend by Location" hint="where" rows={byLoc} center="SPEND" />
-        <LHU.Card title="Biggest Receipts" hint="by cost · click to open">
+        <LHU.Card title="Highest-Cost Sessions" hint="by cost · click to open">
           <LHU.HList
             rows={big.map((s: any, i: number) => ({
               key: s._i, rank: String(i + 1).padStart(2, '0'), name: s.project, sub: fmt.date(s.start),

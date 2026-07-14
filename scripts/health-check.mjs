@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * health-check.mjs — integrity guard for the receipts data pipeline.
+ * health-check.mjs: integrity guard for the usage data pipeline.
  *
  * The logbook is one directory of per-session JSON shards (logbook.d/, see
  * migrate-csv-to-shards.mjs) that every consumer sums directly. This script
@@ -12,14 +12,13 @@
  *   RED  unparseable shards
  *   RED  a live logbook.csv reappeared next to logbook.d/ (a machine is
  *        running a pre-2026-06-29 clone — its rows are being IGNORED)
- *   RED  local-fallback shards exist (~/.claude-receipts/projects/logbook.d)
+ *   RED  local-fallback shards exist (~/.agent-usage-stat/projects/logbook.d)
  *        — written while Drive was unmounted; invisible to portal/statusline
  *        until moved to the Drive dir
  *   RED  pricing misses in hook.log in the last 7 days (models billing $0 NOW)
  *   YEL  zero-cost shards with nonzero tokens (pricing-miss residue; regen if
  *        the transcript still exists)
  *   YEL  shard models missing from src/providers/claude/pricing.ts (after normalization)
- *   YEL  receipts on Drive with no shard, beyond the known-lost baseline
  *   YEL  a machine that used to write shards has gone quiet > 14 days
  *   YEL  token-column arithmetic mismatches
  *
@@ -27,21 +26,13 @@
  */
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { resolveReceiptsRootFromDisk } from "../dist/utils/receipts-root.js";
+import { resolveUsageRootFromDisk } from "../dist/utils/usage-root.js";
 
 const HOME = process.env.USERPROFILE || process.env.HOME || "";
-const ROOT = resolveReceiptsRootFromDisk().root;
+const ROOT = resolveUsageRootFromDisk().root;
 const DIR = join(ROOT, "logbook.d");
-const LOCAL_DIR = join(HOME, ".claude-receipts", "projects", "logbook.d");
-const HOOK_LOG = join(HOME, ".claude-receipts", "hook.log");
-
-// Sessions known lost before the shard mechanism existed (receipts rendered
-// $0 in pricing-miss windows, transcripts since rotated). Permanent; only NEW
-// orphans beyond these are actionable.
-const KNOWN_LOST = new Set([
-  "e9f4c7b9", "e3de7618", "df717342", "c810e36d", "4983b333", "31528023",
-  "1bdf8e19", "5900ef63", "7a831e8d", "8e54e2ed", "cd011e81",
-]);
+const LOCAL_DIR = join(HOME, ".agent-usage-stat", "projects", "logbook.d");
+const HOOK_LOG = join(HOME, ".agent-usage-stat", "hook.log");
 
 let red = 0, yellow = 0;
 const fail = (msg) => { red++; console.log("RED  " + msg); };
@@ -123,17 +114,6 @@ try {
   }
   unk.size ? warn(`models not in pricing table: ${[...unk].join(", ")}`) : ok("all shard models priced");
 } catch { warn("could not read src/providers/claude/pricing.ts (run from repo root)"); }
-
-// ---- orphan receipts ----
-const prefixes = new Set(shards.map((s) => String(s.session_id).slice(0, 8)));
-const orphans = [];
-for (const f of readdirSync(ROOT)) {
-  const m = f.match(/^([0-9a-f]{8})-\d{8}-\d{6}\.html$/);
-  if (m && !prefixes.has(m[1]) && !KNOWN_LOST.has(m[1])) orphans.push(f);
-}
-orphans.length
-  ? warn(`${orphans.length} NEW receipt(s) with no shard (lost row or hook failure): ${orphans.join(", ")}`)
-  : ok("no new orphan receipts");
 
 // ---- machine recency ----
 const lastByMachine = {};
