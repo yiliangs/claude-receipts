@@ -1,225 +1,49 @@
-# Claude Receipts
+# Agent Usage Stat
 
-> **Online-only fork.** Every Claude Code session ends with a thermal-printer-style
-> receipt that opens in your browser — a breakdown of that session's spend by model,
-> token counts, location, and weather. No physical printer, no third-party sharing.
-> This fork also tweaks the receipt (project + branch in the header, weather in the
-> footer) and adds a local **usage portal** that turns your whole receipt history into
-> a spend dashboard.
+See how your coding agents spend tokens, time, and money.
 
-![An example digital receipt](screenshot.png)
+Agent Usage Stat turns local Claude Code and Codex session history into one private analytics portal. Compare models, projects, machines, token composition, cache efficiency, and API-equivalent cost without sending your data anywhere.
 
-## Usage portal
+![Agent Usage Stat portal](screenshot.png)
 
-A local, read-only dashboard over your entire logbook — spend over time, model mix,
-top projects, biggest receipts, and a searchable session explorer. All aggregation
-runs client-side; nothing leaves your machine.
-
-![The usage portal — spend overview](portal.png)
-
-Run it from the `portal/` folder:
+## Start
 
 ```bash
-cd portal
+npm install -g agent-usage-stat
+agent-usage-stat setup
+agent-usage-stat
+```
+
+`setup` connects Claude Code and Codex. Running `agent-usage-stat` opens the portal at `http://127.0.0.1:4179`.
+
+## What the portal shows
+
+- Spend and token trends over time
+- Model and provider mix
+- Cache read and write efficiency
+- Project, machine, and session comparisons
+- Searchable session-level detail
+
+Costs are API-equivalent list-price estimates. They do not represent the marginal cost of a ChatGPT or Claude subscription.
+
+## Local by design
+
+Session metadata is read from the tools' local transcripts and normalized into one JSON shard per session. The portal is served only on localhost, and all aggregation happens on your machine.
+
+To combine several machines, point them at the same synced directory:
+
+```bash
+agent-usage-stat config --set dataRoot="<shared-directory>/agent-usage-stat"
+```
+
+## Development
+
+```bash
 npm install
-npm run dev      # builds the data, then opens http://localhost:4179
+npm install --prefix portal
+npm test
+npm run build:portal
+node bin/agent-usage-stat.js portal
 ```
 
-On Windows you can just double-click `portal/Claude-Receipts.bat`. The portal reads
-the per-session logbook shards (`logbook.d/`) written by the hook; point it at a
-different copy with `CLAUDE_RECEIPTS_LOGBOOK=/path/to/logbook.csv` (an anchor
-path — its sibling `logbook.d/` is what gets read).
-
-## Installation
-
-```bash
-npx claude-receipts setup
-```
-
-This will:
-
-- Configure the `SessionEnd` hook in your global `~/.claude/settings.json`
-- Create a config file at `~/.claude-receipts.config.json`
-
-From now on, every time you exit a Claude Code session, a receipt is generated and
-opened in your browser.
-
-### Manual generation
-
-Generate a receipt for your most recent session:
-
-```bash
-npx claude-receipts generate
-```
-
-## Commands
-
-### `generate`
-
-Generate a receipt for a Claude Code session.
-
-```bash
-# Most recent session
-npx claude-receipts generate
-
-# Save styled HTML (this is what the hook does)
-npx claude-receipts generate --output html
-
-# Image / PDF (rendered via headless Chromium)
-npx claude-receipts generate --output png,pdf
-
-# A specific session by UUID prefix
-npx claude-receipts generate --session 9356d5e2
-
-# Override location
-npx claude-receipts generate --location "Paris, France"
-```
-
-**Options:**
-
-- `-s, --session <id>` - Generate for a specific session ID or UUID prefix
-- `-o, --output <format>` - Output format: "html", "png", "pdf", or "console" (supports multiple, comma-separated or repeated)
-- `-l, --location <text>` - Override location detection
-
-**Output formats:**
-
-- `html` - Beautiful styled receipt saved to your receipts root
-- `png` - Rasterized receipt image (rendered via headless Chromium)
-- `pdf` - PDF receipt (rendered via headless Chromium)
-- `console` - ASCII art display in terminal
-
-Files (and the `logbook.d/` shards) are written to your **receipts root**.
-When unset, an established shared root on a Google Drive mount is auto-detected
-(Windows drive letters and macOS `~/Library/CloudStorage/GoogleDrive-*` are
-checked for `claude-receipts/logbook.d/`), else `~/.claude-receipts/projects`
-is used. Point it anywhere explicitly (e.g. a synced Google Drive folder to
-collect receipts across machines) with:
-
-```bash
-# Windows
-npx claude-receipts config --set receiptsRoot="H:/My Drive/claude-receipts"
-# macOS
-npx claude-receipts config --set receiptsRoot="~/Library/CloudStorage/GoogleDrive-you@example.com/My Drive/claude-receipts"
-```
-
-### `setup`
-
-Configure automatic receipt generation.
-
-```bash
-# Run interactive setup
-npx claude-receipts setup
-
-# Uninstall the hook
-npx claude-receipts setup --uninstall
-```
-
-This modifies `~/.claude/settings.json` to add a `SessionEnd` hook that automatically
-generates receipts.
-
-### `config`
-
-Manage your receipt configuration.
-
-```bash
-# Show current configuration
-npx claude-receipts config --show
-
-# Set a configuration value
-npx claude-receipts config --set location="Kuala Lumpur, Malaysia"
-npx claude-receipts config --set timezone="Asia/Kuala_Lumpur"
-npx claude-receipts config --set receiptsRoot="H:/My Drive/claude-receipts"
-
-# Reset to defaults
-npx claude-receipts config --reset
-```
-
-**Available settings:**
-
-- `location` - Default location (string)
-- `timezone` - Timezone for dates (string, e.g., "Asia/Macau")
-- `receiptsRoot` - Directory for receipts + logbook (path; `~` is expanded)
-
-## Configuration
-
-Configuration is stored at `~/.claude-receipts.config.json`.
-
-**Default configuration:**
-
-```json
-{
-  "version": "1.0.0"
-}
-```
-
-**Optional settings:**
-
-- `location` - Custom location string (otherwise auto-detected)
-- `timezone` - Custom timezone for date formatting
-- `receiptsRoot` - Where receipts and the logbook are written (default `~/.claude-receipts/projects`; `~` is expanded)
-
-### Location detection
-
-Location is determined in this order:
-
-1. `--location` flag (if provided)
-2. Config file `location` setting
-3. Auto-detection via IP geolocation (offline, using geoip-lite)
-4. Fallback: "The Cloud"
-
-## How it works
-
-1. **SessionEnd hook**: when you exit Claude Code, it pipes the session id and transcript path to `claude-receipts generate --output html`.
-2. **Cost, computed inline**: every assistant message in the transcript JSONL carries its own token usage and model id, priced from a built-in table in `src/core/pricing.ts`. No subprocess, no external indexer — the receipt is ready in about a second.
-3. **Render + open**: a styled HTML receipt is generated and opened in your default browser (hook mode only).
-4. **Logbook**: one row per session is appended to a logbook that the usage portal reads, so your whole history is summarizable across sessions.
-
-## Requirements
-
-- Node.js >= 20.0.0
-- Claude Code (for automatic generation)
-
-## Troubleshooting
-
-### Hook not triggering
-
-Check that the hook is installed:
-
-```bash
-cat ~/.claude/settings.json
-```
-
-You should see a `SessionEnd` hook pointing to `claude-receipts`. Diagnostic events
-are appended to `~/.claude-receipts/hook.log` on every hook fire.
-
-### A session renders at $0
-
-Cost is computed from the transcript's per-message usage and a built-in price table.
-When a brand-new Claude model ships before its price is added to `src/core/pricing.ts`,
-those tokens bill at $0 until the entry is added (the miss is logged to `hook.log`).
-Very short sessions with no model traffic legitimately have no cost.
-
-### "Cannot determine transcript path"
-
-You're trying to manually generate a receipt but the most recent session has no valid
-project path. Either run from within a `SessionEnd` hook (use the `setup` command) or
-work in a Claude Code session and let it auto-generate.
-
-## Roadmap
-
-- [x] HTML receipts with auto-open in browser
-- [x] Console ASCII art mode
-- [x] Accurate session cost tracking (computed inline from the transcript)
-- [x] Session matching by UUID or prefix
-- [x] Image export (PNG and PDF, via headless Chromium)
-- [x] Local usage portal (spend dashboard over the logbook)
-- [ ] Plugin for Opencode ([opencode issue](https://github.com/anomalyco/opencode/issues/10524))
-
-## Credits
-
-A digital-only fork of the original `claude-receipts` — the thermal-printer project
-that started it all.
-
-## License
-
-MIT
+Node.js 20 or newer is required. Licensed under MIT.

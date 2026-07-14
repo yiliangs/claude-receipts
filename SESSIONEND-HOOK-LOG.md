@@ -1,187 +1,40 @@
-# SessionEnd Hook Reliability — Engineering Log
+# Hook capture reliability
 
-> **READ THIS BEFORE "fixing" the SessionEnd hook.** This problem has been
-> re-opened repeatedly because each fix addressed a *symptom* while the root
-> tension stayed undocumented. If receipts stop appearing (false negatives) or
-> appear too often (false positives), you are almost certainly about to repeat
-> a cycle that already happened. Read the timeline, run the diagnostics, and
-> respect the invariants at the bottom before changing anything.
+Claude Code does not reliably wait for `SessionEnd` hooks during `/exit` or terminal close. It can tear down the hook process tree within roughly one second. `/clear` often hides the problem because Claude Code remains alive.
 
----
+The integration therefore uses a small synchronous shim. It reads stdin, checks the transcript entrypoint, writes a temporary input file, spawns a detached capture worker, and exits. The worker performs parsing, pricing, and shard writing after the host process is gone.
 
-## The root tension (this is the thing that keeps biting)
+## Diagnostic signatures
 
-Claude Code's **SessionEnd hook is fundamentally unreliable on session exit**,
-and this is outside our control:
+The hook log is `~/.agent-usage-stat/hook.log`.
 
-- On `/exit` (and terminal close), Claude Code does **not** reliably wait for
-  SessionEnd hooks. It tears down the hook process tree within ~1s and shows
-  **"hook is cancelled"**. (Public refs: anthropics/claude-code #41577 async
-  SessionEnd killed before completion; #17885 SessionEnd may not fire on
-  `/exit`; #32712 Ctrl-C cancels it; thedotmack/claude-mem #1395 — *identical*
-  "Hook cancelled on Windows" symptom.)
-- On `/clear`, the Claude Code process **stays alive**, so a slow/heavy hook
-  completes. **This is why a broken hook often "works on /clear but not
-  /exit" — that asymmetry is the signature of this whole class of bug.**
-
-Our entire architecture is a workaround for this: the hook is a **thin shim**
-that does almost nothing except `spawn` a **detached background worker**, then
-exits. The worker survives Claude Code's teardown and does the slow rendering
-off the critical path.
-
-**The reliability of this hinges on ONE thing: the shim must spawn the worker
-*before* Claude Code kills the tree (~1s budget).** Anything that slows the
-shim's startup — a heavy import, a slow wrapper, a blocking stdin read —
-silently breaks it and produces false negatives. The failure is invisible in
-code review because the *logic* is correct; only the *timing* regressed.
-
----
-
-## Diagnostic guide (do this first, every time)
-
-The hook's only window is `~/.claude-receipts/hook.log`. Match the signature:
-
-| hook.log pattern | Meaning |
+| Pattern | Meaning |
 |---|---|
-| `shim spawned worker pid=N` **followed by** `invoke pid=N` … `done` | Healthy. Full chain ran. |
-| `shim spawned worker pid=N` with **no** matching `invoke pid=N` | **Worker killed before starting** → shim spawned it too late (shim too slow) OR teardown too aggressive. This is the classic false-negative. |
-| No `shim …` line at all for a real exit | Hook never started, or was killed during the wrapper/node-resolution phase before the first log write. |
-| `shim skip: non-interactive entrypoint=sdk-cli` | Working as intended — headless/SDK session correctly skipped (see false-positive history). |
-| Worker logs `manual mode` / `manual session=…` when it should have hook JSON | The shim's temp-file JSON was malformed or unreadable → worker fell back to scanning for the most recent session → **generates a receipt for the WRONG session.** |
+| `shim spawned worker` followed by `invoke` and `done` | Healthy |
+| `shim spawned worker` without `invoke` | Worker was killed before startup |
+| No `shim` line | Wrapper or hook never started |
+| `shim skip: non-interactive entrypoint=sdk-cli` | Intentional automation skip |
+| Worker enters manual mode after a hook | Temporary hook input was missing or invalid |
 
-Measure shim startup (must be well under ~1s; target ≤ ~0.6s through the wrapper):
-
-```bash
-# Shim-only path, empty stdin → exits without spawning a worker, no receipt:
-time (printf '' | node bin/claude-receipts.js generate --detach)
-
-# Full real hook command as Claude Code invokes it:
-time (printf '' | bash bin/run-hook.sh generate --detach --output html,png,pdf)
-
-# Confirm the heavy graph is NOT on the shim path (this is the trap):
-time node -e 'await import("./dist/commands/generate.js")'   # ~1.8s — must stay OFF the shim path
-time node bin/claude-receipts.js --version                   # must stay fast (~0.2s)
-```
-
-End-to-end wiring test (synthetic transcripts, `--output console` to avoid
-browser/Drive side effects — **use forward-slash paths in the JSON; Windows
-backslashes are invalid JSON escapes and silently send the worker into
-wrong-session manual mode**):
+## Checks
 
 ```bash
-TMP="${TMPDIR:-/tmp}"; CLI="$TMP/cr-test-cli.jsonl"
-{ printf '%s\n' '{"type":"user","entrypoint":"cli","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"hi there"}}';
-  printf '%s\n' '{"type":"assistant","timestamp":"2026-01-01T00:00:05Z","message":{"role":"assistant","model":"claude-opus-4-7","usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}'; } > "$CLI"
-printf '{"session_id":"t","transcript_path":"%s","reason":"clear","cwd":"C:/tmp"}' "$(cygpath -m "$CLI" 2>/dev/null || echo "$CLI")" \
-  | node bin/claude-receipts.js generate --detach --output console
-sleep 3; tail -8 "$HOME/.claude-receipts/hook.log"; rm -f "$CLI"
+time (printf '' | node bin/agent-usage-stat.js capture --detach)
+time (printf '' | bash bin/run-hook.sh capture --detach --provider claude --quiet)
+time node bin/agent-usage-stat.js --version
 ```
 
-**Manual tests cannot reproduce the teardown-kill** (there's no Claude Code
-exiting). They only prove the shim is fast and the wiring is correct. The only
-true test of the fix is closing a real interactive session and checking the log.
+Manual checks validate startup and wiring. Only a real Claude Code `/exit` validates survival during host teardown.
 
----
+## Invariants
 
-## Timeline of fixes (and what each one broke or exposed)
+1. `src/cli.ts`, `src/commands/detach-shim.ts`, and `src/utils/hook-log.ts` may import only lightweight modules on the shim path.
+2. The shim does only stdin read, entrypoint gate, temporary file write, detached spawn, and exit.
+3. Do not mark the Claude `SessionEnd` hook async. The host must wait long enough for the shim to spawn its worker.
+4. Keep Node resolution in `bin/run-hook.sh`. Never write an absolute Node executable into host settings.
+5. Read no more than 128 KB from a transcript for the entrypoint gate.
+6. Use valid JSON paths in synthetic hook tests. Raw Windows backslashes are invalid JSON escapes.
+7. Validate changes with a real `/exit`, not only `/clear`.
+8. Keep `bin/run-hook.sh` executable in Git.
 
-1. **Original** — Heavy work ran synchronously inside the hook. On `/exit` and
-   `/clear`, Claude Code killed the hook mid-render: PNG/PDF lost, sometimes the
-   logbook row too. A real $391 receipt went missing.
-
-2. **`--detach` shim** (session `bff74b3c`, ~2026-05-21) — Hook became a shim
-   that spawns a detached, `unref`'d worker (`spawn(..., {detached:true,
-   stdio:"ignore", windowsHide:true})`). Worker survives teardown and renders in
-   the background. **Worked at the time** because the shim was fast enough.
-
-3. **False positives** — Headless SDK / `claude -p` automations fire SessionEnd
-   with `reason=other` and were each producing a receipt + browser tab + PNG +
-   PDF + logbook row. Fixed with an **entrypoint gate**: read the head (128 KB,
-   never the whole file — they can be hundreds of MB) of the transcript and bail
-   when `entrypoint` starts with `sdk` (interactive runs report `cli`). Override
-   with `CLAUDE_RECEIPTS_ALL_SESSIONS=1`. This logic lives in `detach-shim.ts`.
-
-4. **Portable node resolution** (commits `8012e00`, `cda7607`) — Hook routed
-   through `bin/run-hook.sh` so node is resolved at runtime (PATH → WinGet glob →
-   nvm) instead of baking a versioned `process.execPath` that breaks on upgrade.
-   Necessary, but it added a process layer. *(Suspected as the latency culprit
-   during the next debug — it is NOT; the wrapper adds only ~0.2s. Don't waste
-   time ripping it out.)*
-
-5. **False negatives — "hook is cancelled"** (2026-05-27, this log's origin) —
-   Receipts stopped firing on exit; worked on `/clear`. **Root cause: the shim
-   was importing the full renderer module graph (`geoip-lite` 154 MB + `date-fns`
-   + the `usb` native addon + chalk/boxen/ora) — ~1.8s of module-load time —
-   *before* it could read stdin and spawn the worker.** On `/exit` Claude Code
-   killed it mid-import, so the worker was never spawned (log showed
-   `shim spawned worker` only on the rare slow-teardown case, never `invoke`).
-   The logic was correct; the *startup time* had crept up as the app grew.
-
-   **Fix:** split the shim into `src/commands/detach-shim.ts` importing **only
-   Node built-ins + `src/utils/hook-log.ts`**, and made `src/cli.ts` route
-   `generate --detach` there via dynamic `import()` while lazy-loading every
-   command class. Shim startup: **1.8s → ~0.35s** (~0.6s through the wrapper).
-   The worker leg (`generate --input-file`) still loads the full graph — fine,
-   it's detached and off the critical path.
-
-6. **macOS support** (2026-07-09) — Two latent failures found while making the
-   repo cloneable on a MacBook, both in the "hook never started" class (no
-   `shim …` line in hook.log at all):
-   - `bin/run-hook.sh` was committed **without the executable bit** (mode
-     100644). Windows never notices (Git Bash execs it regardless of mode);
-     on macOS the hook dies instantly with *permission denied* before the
-     first log write. Fixed with `git update-index --chmod=+x`.
-   - Node resolution knew PATH → WinGet → nvm but not **Homebrew**
-     (`/opt/homebrew/bin` on Apple Silicon, `/usr/local/bin` on Intel).
-     Homebrew's dirs reach PATH via the login shell's profile, which a hook
-     shell doesn't source — the same stripped-PATH failure WinGet globbing
-     fixed on Windows. Added both candidates between the WinGet and nvm legs.
-
----
-
-## The recurring trap, stated plainly
-
-> **Every regression in this saga reduces to: something slowed the shim's path
-> to `spawn()`, or made the worker start with bad input.** The code keeps
-> looking correct, so reviewers approve it, and the timing failure only shows up
-> when a *real* session exits on Windows. If you find yourself "fixing the hook"
-> again, first run the diagnostics above and check whether shim startup crept
-> back up — that is the most likely culprit, not the logic.
-
----
-
-## Invariants — do not violate without updating this log
-
-1. **Never add a heavy static import to `src/cli.ts`, `src/commands/detach-shim.ts`,
-   or `src/utils/hook-log.ts`.** These three are the only modules the
-   `--detach` shim loads. "Heavy" = anything that transitively pulls
-   `geoip-lite`, `date-fns`, `usb`/native addons, puppeteer, or the renderer/
-   usage/location/weather chain. Keep all command classes lazy-imported in
-   `cli.ts`.
-2. **The shim does the minimum and exits:** read stdin → SDK-skip check → write
-   temp file → `spawn` detached worker → exit. No config load, no network, no
-   rendering. All of that is the worker's job.
-3. **Do NOT add `async: true` to the SessionEnd hook in settings.json.** It tells
-   Claude Code not to wait, so it exits *immediately* and may kill the shim
-   before it spawns the worker. We *want* Claude Code to wait the ~0.6s for the
-   fast shim — that synchronous wait is what guarantees the worker gets spawned.
-4. **Keep node resolution via `bin/run-hook.sh`.** Do not bake `process.execPath`
-   into settings.json (versioned WinGet path breaks on node upgrade). The wrapper
-   is cheap (~0.2s); it is not the latency problem.
-5. **The transcript head read stays ≤128 KB.** Transcripts can be hundreds of MB.
-6. **Hook JSON paths must be valid JSON.** When constructing test input, use
-   forward slashes; never embed raw Windows backslash paths (invalid escapes →
-   worker falls into wrong-session manual mode).
-7. **Validate on a real `/exit`, not just `/clear`.** `/clear` masks this entire
-   bug class because the process stays alive.
-8. **`bin/run-hook.sh` (and any launcher script) must stay committed with the
-   executable bit (mode 100755).** A Windows checkout cannot see the bit
-   (`core.filemode=false`), so losing it is invisible here and fatal on macOS
-   — the hook fails with *permission denied* before its first log write.
-   Check with `git ls-files -s bin/run-hook.sh`; fix with
-   `git update-index --chmod=+x`.
-
----
-
-*Last updated: 2026-07-09 — macOS: exec bit restored on run-hook.sh, Homebrew
-node resolution added (invariant 8).*
+The `AGENT_USAGE_STAT_ALL_SESSIONS=1` environment variable disables the Claude automation gate when SDK session capture is intentional.
