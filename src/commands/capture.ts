@@ -8,13 +8,12 @@ import { logHookEvent } from "../utils/hook-log.js";
 import {
   detectProvider,
   findSession,
-  providerByName,
 } from "../providers/registry.js";
 import { ConfigManager } from "../core/config-manager.js";
 import { LogbookWriter } from "../core/logbook-writer.js";
 import { resolveUsageRoot } from "../utils/usage-root.js";
 import type { HookData } from "../types/session-hook.js";
-import type { ProviderName, SessionProvider } from "../types/provider.js";
+import type { SessionProvider } from "../types/provider.js";
 
 const execAsync = promisify(exec);
 
@@ -22,7 +21,6 @@ export interface CaptureOptions {
   session?: string;
   detach?: boolean;
   inputFile?: string;
-  provider?: ProviderName;
   quiet?: boolean;
 }
 
@@ -61,11 +59,9 @@ export class CaptureCommand {
       logHookEvent(`data root ${root} (${source})`);
 
       if (transcriptPath) {
-        provider = options.provider
-          ? providerByName(options.provider)
-          : await detectProvider(transcriptPath);
+        provider = await detectProvider(transcriptPath);
       } else {
-        const resolved = await findSession(options.session, options.provider);
+        const resolved = await findSession(options.session);
         provider = resolved.provider;
         transcriptPath = resolved.found.transcriptPath;
         sessionId = resolved.found.sessionId;

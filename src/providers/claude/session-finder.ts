@@ -4,7 +4,7 @@ import { homeDir } from "../../utils/paths.js";
 import type { FoundSession } from "../../types/provider.js";
 
 /**
- * Locate a session's transcript file by walking ~/.claude/projects/*\/*.jsonl.
+ * Locate a session transcript under the active Claude Code config directory.
  *
  * Replaces the manual-mode discovery step that previously shelled out to
  * `ccusage session --json --breakdown`. We don't need ccusage's index —
@@ -14,8 +14,10 @@ import type { FoundSession } from "../../types/provider.js";
 export class SessionFinder {
   private root: string;
 
-  constructor() {
-    this.root = join(homeDir(), ".claude", "projects");
+  constructor(
+    claudeHome = process.env.CLAUDE_CONFIG_DIR || join(homeDir(), ".claude"),
+  ) {
+    this.root = join(claudeHome, "projects");
   }
 
   /**

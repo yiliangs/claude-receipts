@@ -1,12 +1,50 @@
 # Agent Usage Stat
 
-See how your coding agents spend tokens, time, and money.
-
-Agent Usage Stat turns local Claude Code and Codex session history into one private analytics portal. Compare models, projects, machines, token composition, cache efficiency, and API-equivalent cost without sending your data anywhere.
+A private, local portal for understanding how your coding agents use tokens, time, and API-equivalent cost.
 
 ![Agent Usage Stat portal](screenshot.png)
 
+## Supported
+
+Agent Usage Stat supports:
+
+- Windows and macOS
+- Claude Code
+- OpenAI Codex, including Codex sessions used through ChatGPT
+
+It does not read general ChatGPT chats, Claude.ai chats, Linux sessions, or API-account usage. All data stays on your machine or in the folder you choose.
+
 ## Start
+
+Node.js 20 or newer is required.
+
+1. [Download or clone this repository](https://github.com/yiliangs/agent-usage-stat).
+2. On Windows, double-click `Initialize-Agent-Usage-Stat.bat`. On macOS, double-click `Initialize-Agent-Usage-Stat.command`.
+3. Choose the folder where usage data should be stored.
+
+That folder is the only setting. The initializer detects the operating system and installed agents, installs a private runtime under your user profile, connects Claude Code and Codex automatically, and opens the portal.
+
+Codex requires one security confirmation before it can run a new hook. If Codex asks, open `/hooks` and trust the Agent Usage Stat hook. This confirmation cannot be completed by the initializer.
+
+After initialization, use the dedicated one-click portal launcher whenever you
+want a fresh portal: `portal/Agent-Usage-Stat.bat` on Windows or
+`portal/Agent-Usage-Stat.command` on macOS. It stops the previous local server,
+reconciles local Codex turns into the configured `logbook.d/`, rebuilds the
+browser data, and opens the portal.
+
+## What you get
+
+- Spend and token trends
+- Claude Code and Codex comparisons
+- Model, project, machine, and session breakdowns
+- Cache read and write efficiency
+- Searchable session details
+
+Costs are API-equivalent list-price estimates. They are not charges added to a ChatGPT or Claude subscription.
+
+Each completed session becomes one JSON file under `<your-folder>/logbook.d/`. You can use a synced folder to combine several Windows and macOS machines.
+
+## Terminal alternative
 
 ```bash
 npm install -g agent-usage-stat
@@ -14,26 +52,10 @@ agent-usage-stat setup
 agent-usage-stat
 ```
 
-`setup` connects Claude Code and Codex. Running `agent-usage-stat` opens the portal at `http://127.0.0.1:4179`.
-
-## What the portal shows
-
-- Spend and token trends over time
-- Model and provider mix
-- Cache read and write efficiency
-- Project, machine, and session comparisons
-- Searchable session-level detail
-
-Costs are API-equivalent list-price estimates. They do not represent the marginal cost of a ChatGPT or Claude subscription.
-
-## Local by design
-
-Session metadata is read from the tools' local transcripts and normalized into one JSON shard per session. The portal is served only on localhost, and all aggregation happens on your machine.
-
-To combine several machines, point them at the same synced directory:
+`setup` asks for the data folder only. To change it later:
 
 ```bash
-agent-usage-stat config --set dataRoot="<shared-directory>/agent-usage-stat"
+agent-usage-stat config --set dataRoot="<new-folder>"
 ```
 
 ## Development
@@ -42,8 +64,6 @@ agent-usage-stat config --set dataRoot="<shared-directory>/agent-usage-stat"
 npm install
 npm install --prefix portal
 npm test
-npm run build:portal
-node bin/agent-usage-stat.js portal
 ```
 
-Node.js 20 or newer is required. Licensed under MIT.
+Licensed under MIT.

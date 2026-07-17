@@ -19,7 +19,6 @@ import type { HookData } from "../types/session-hook.js";
  * built-ins. Fast startup is the whole point of the shim.
  */
 export interface DetachShimOptions {
-  provider?: string;
   quiet?: boolean;
 }
 
@@ -81,9 +80,6 @@ export function runDetachShim(options: DetachShimOptions): void {
   }
 
   const args = [process.argv[1], "capture", "--input-file", tmpFile];
-  if (options.provider) {
-    args.push("--provider", options.provider);
-  }
   if (options.quiet) {
     args.push("--quiet");
   }

@@ -15,7 +15,7 @@ export class SessionFinder {
   }
 
   async find(query?: string): Promise<FoundSession> {
-    const all = await this.scanAll();
+    const all = await this.findAll();
     if (all.length === 0) {
       throw new Error(
         `No Codex rollouts found under ${this.roots.join(" or ")}.`,
@@ -35,6 +35,18 @@ export class SessionFinder {
 
     matches.sort((a, b) => b.mtimeMs - a.mtimeMs);
     return matches[0];
+  }
+
+  /** List one newest rollout file per Codex session id. */
+  async findAll(): Promise<FoundSession[]> {
+    const byId = new Map<string, FoundSession>();
+    for (const found of await this.scanAll()) {
+      const existing = byId.get(found.sessionId);
+      if (!existing || found.mtimeMs > existing.mtimeMs) {
+        byId.set(found.sessionId, found);
+      }
+    }
+    return [...byId.values()].sort((a, b) => a.mtimeMs - b.mtimeMs);
   }
 
   private async scanAll(): Promise<FoundSession[]> {

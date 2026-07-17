@@ -17,6 +17,21 @@ export interface ModelBreakdown {
   cost: number;
 }
 
+/** One turn-scoped usage slice. Session totals remain the sum of these slices. */
+export interface TurnUsage {
+  id: string;
+  startTime: string;
+  endTime: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  modelsUsed: string[];
+  modelBreakdowns: ModelBreakdown[];
+}
+
 export interface SessionUsage {
   provider: ProviderName;
   sessionId: string;
@@ -29,5 +44,8 @@ export interface SessionUsage {
   lastActivity?: string;
   modelsUsed?: string[];
   modelBreakdowns?: ModelBreakdown[];
+  turns?: TurnUsage[];
+  /** Provider-source fingerprint used for idempotent reconciliation. */
+  sourceFingerprint?: string;
   projectPath?: string;
 }

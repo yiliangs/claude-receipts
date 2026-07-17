@@ -35,9 +35,26 @@ export interface LogbookRecord {
   total_tokens: number;
   total_cost_usd: number;
   models: string[];
+  /** Turn-scoped slices for accurate time attribution. Older shards omit it. */
+  turns?: LogbookTurnRecord[];
+  /** Fingerprint of the provider transcript used to build this snapshot. */
+  source_fingerprint?: string;
   /** Which tool produced the session. Shards written before 2026-07-09 lack
    *  the field — consumers default it to "claude". */
   provider: string;
+}
+
+export interface LogbookTurnRecord {
+  turn_id: string;
+  start_time: string;
+  end_time: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  models: string[];
 }
 
 /**
@@ -168,6 +185,8 @@ export class LogbookWriter {
       total_tokens: existing.total_tokens,
       total_cost_usd: existing.total_cost_usd,
       models: existing.models,
+      turns: existing.turns,
+      source_fingerprint: existing.source_fingerprint,
     };
   }
 
@@ -197,6 +216,19 @@ export class LogbookWriter {
       total_tokens: sessionData.totalTokens ?? 0,
       total_cost_usd: Number((sessionData.totalCost ?? 0).toFixed(6)),
       models,
+      turns: sessionData.turns?.map((turn) => ({
+        turn_id: turn.id,
+        start_time: turn.startTime,
+        end_time: turn.endTime,
+        input_tokens: turn.inputTokens,
+        output_tokens: turn.outputTokens,
+        cache_creation_tokens: turn.cacheCreationTokens,
+        cache_read_tokens: turn.cacheReadTokens,
+        total_tokens: turn.totalTokens,
+        total_cost_usd: Number(turn.totalCost.toFixed(6)),
+        models: turn.modelsUsed,
+      })),
+      source_fingerprint: sessionData.sourceFingerprint,
       provider: sessionData.provider,
     };
   }

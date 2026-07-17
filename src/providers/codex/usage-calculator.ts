@@ -8,6 +8,7 @@ import {
   type ModelPricing,
 } from "./pricing.js";
 import { displayModelName } from "./model-names.js";
+import { fingerprintTranscriptContent } from "./transcript-fingerprint.js";
 import type {
   CodexRolloutRecord,
   CodexTokenUsage,
@@ -15,13 +16,22 @@ import type {
 import type {
   ModelBreakdown,
   SessionUsage,
+  TurnUsage,
 } from "../../types/session.js";
 
 interface ModelTotals {
   inputTokens: number;
   outputTokens: number;
+  cacheCreationTokens: number;
   cacheReadTokens: number;
   cost: number;
+}
+
+interface TurnAccumulator {
+  id: string;
+  startTime: string;
+  endTime: string;
+  totalsByModel: Map<string, ModelTotals>;
 }
 
 /** Sum Codex token_count billing events from one rollout JSONL file. */
@@ -39,9 +49,12 @@ export class UsageCalculator {
     }
 
     const content = await readFile(expanded, "utf-8");
+    const sourceFingerprint = fingerprintTranscriptContent(content);
     const totalsByModel = new Map<string, ModelTotals>();
+    const turns = new Map<string, TurnAccumulator>();
     const seenCumulativeUsage = new Set<string>();
     let currentModel = "unknown";
+    let currentTurn: TurnAccumulator | undefined;
     let sessionId = fallbackSessionId;
 
     for (const line of content.split("\n")) {
@@ -58,9 +71,24 @@ export class UsageCalculator {
         continue;
       }
 
-      if (record.type === "turn_context" && record.payload?.model) {
-        currentModel = normalizeModelId(record.payload.model);
+      if (record.type === "turn_context") {
+        if (record.payload?.model) {
+          currentModel = normalizeModelId(record.payload.model);
+        }
+        const id = record.payload?.turn_id || `turn-${turns.size + 1}`;
+        const timestamp = record.timestamp || "";
+        currentTurn = turns.get(id) ?? {
+          id,
+          startTime: timestamp,
+          endTime: timestamp,
+          totalsByModel: new Map<string, ModelTotals>(),
+        };
+        turns.set(id, currentTurn);
         continue;
+      }
+
+      if (currentTurn && record.timestamp) {
+        currentTurn.endTime = record.timestamp;
       }
 
       if (
@@ -83,59 +111,89 @@ export class UsageCalculator {
 
       const usage = record.payload.info.last_token_usage;
       const model = normalizeModelId(currentModel);
-      const totals = totalsByModel.get(model) ?? {
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cost: 0,
-      };
+      if (!currentTurn) {
+        const timestamp = record.timestamp || "";
+        currentTurn = {
+          id: "turn-1",
+          startTime: timestamp,
+          endTime: timestamp,
+          totalsByModel: new Map<string, ModelTotals>(),
+        };
+        turns.set(currentTurn.id, currentTurn);
+      }
 
       const allInput = Math.max(0, usage.input_tokens ?? 0);
       const cached = Math.min(
         allInput,
         Math.max(0, usage.cached_input_tokens ?? 0),
       );
-      const uncached = allInput - cached;
+      // Older Codex rollouts omit this field. Keep those tokens as ordinary
+      // input instead of inventing a cache-write count that cannot be audited.
+      const cacheWrite = Math.min(
+        allInput - cached,
+        Math.max(0, usage.cache_write_tokens ?? 0),
+      );
+      const uncached = allInput - cached - cacheWrite;
       const output = Math.max(0, usage.output_tokens ?? 0);
 
-      totals.inputTokens += uncached;
-      totals.cacheReadTokens += cached;
-      totals.outputTokens += output;
-      totals.cost += this.costFor(model, uncached, cached, output, allInput);
-      totalsByModel.set(model, totals);
+      const cost = this.costFor(
+        model,
+        uncached,
+        cached,
+        cacheWrite,
+        output,
+        allInput,
+      );
+      this.addUsage(
+        totalsByModel,
+        model,
+        uncached,
+        cached,
+        cacheWrite,
+        output,
+        cost,
+      );
+      this.addUsage(
+        currentTurn.totalsByModel,
+        model,
+        uncached,
+        cached,
+        cacheWrite,
+        output,
+        cost,
+      );
     }
 
-    const breakdowns: ModelBreakdown[] = [...totalsByModel].map(
-      ([model, totals]) => ({
-        modelName: model,
-        displayName: displayModelName(model),
-        inputTokens: totals.inputTokens,
-        outputTokens: totals.outputTokens,
-        cacheCreationTokens: 0,
-        cacheReadTokens: totals.cacheReadTokens,
-        cost: totals.cost,
-      }),
-    );
-    breakdowns.sort((a, b) => b.cost - a.cost);
+    const breakdowns = this.toBreakdowns(totalsByModel);
 
     const totalInput = breakdowns.reduce((sum, x) => sum + x.inputTokens, 0);
     const totalOutput = breakdowns.reduce((sum, x) => sum + x.outputTokens, 0);
+    const totalCacheCreate = breakdowns.reduce(
+      (sum, x) => sum + (x.cacheCreationTokens ?? 0),
+      0,
+    );
     const totalCacheRead = breakdowns.reduce(
       (sum, x) => sum + (x.cacheReadTokens ?? 0),
       0,
     );
+    const turnUsage = [...turns.values()]
+      .map((turn) => this.toTurnUsage(turn))
+      .filter((turn) => turn.totalTokens > 0)
+      .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
 
     return {
       provider: "codex",
       sessionId,
       inputTokens: totalInput,
       outputTokens: totalOutput,
-      cacheCreationTokens: 0,
+      cacheCreationTokens: totalCacheCreate,
       cacheReadTokens: totalCacheRead,
-      totalTokens: totalInput + totalOutput + totalCacheRead,
+      totalTokens: totalInput + totalOutput + totalCacheCreate + totalCacheRead,
       totalCost: breakdowns.reduce((sum, x) => sum + x.cost, 0),
       modelsUsed: breakdowns.map((x) => x.modelName),
       modelBreakdowns: breakdowns,
+      turns: turnUsage,
+      sourceFingerprint,
     };
   }
 
@@ -143,10 +201,75 @@ export class UsageCalculator {
     return [...this.unknownModels];
   }
 
+  private addUsage(
+    totalsByModel: Map<string, ModelTotals>,
+    model: string,
+    input: number,
+    cached: number,
+    cacheWrite: number,
+    output: number,
+    cost: number,
+  ): void {
+    const totals = totalsByModel.get(model) ?? {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      cost: 0,
+    };
+    totals.inputTokens += input;
+    totals.outputTokens += output;
+    totals.cacheCreationTokens += cacheWrite;
+    totals.cacheReadTokens += cached;
+    totals.cost += cost;
+    totalsByModel.set(model, totals);
+  }
+
+  private toBreakdowns(
+    totalsByModel: Map<string, ModelTotals>,
+  ): ModelBreakdown[] {
+    const breakdowns = [...totalsByModel].map(([model, totals]) => ({
+      modelName: model,
+      displayName: displayModelName(model),
+      inputTokens: totals.inputTokens,
+      outputTokens: totals.outputTokens,
+      cacheCreationTokens: totals.cacheCreationTokens,
+      cacheReadTokens: totals.cacheReadTokens,
+      cost: totals.cost,
+    }));
+    breakdowns.sort((a, b) => b.cost - a.cost);
+    return breakdowns;
+  }
+
+  private toTurnUsage(turn: TurnAccumulator): TurnUsage {
+    const breakdowns = this.toBreakdowns(turn.totalsByModel);
+    const sum = (pick: (x: ModelBreakdown) => number): number =>
+      breakdowns.reduce((total, item) => total + pick(item), 0);
+    const inputTokens = sum((x) => x.inputTokens);
+    const outputTokens = sum((x) => x.outputTokens);
+    const cacheCreationTokens = sum((x) => x.cacheCreationTokens ?? 0);
+    const cacheReadTokens = sum((x) => x.cacheReadTokens ?? 0);
+    return {
+      id: turn.id,
+      startTime: turn.startTime,
+      endTime: turn.endTime || turn.startTime,
+      inputTokens,
+      outputTokens,
+      cacheCreationTokens,
+      cacheReadTokens,
+      totalTokens:
+        inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens,
+      totalCost: sum((x) => x.cost),
+      modelsUsed: breakdowns.map((x) => x.modelName),
+      modelBreakdowns: breakdowns,
+    };
+  }
+
   private costFor(
     model: string,
     uncachedInput: number,
     cachedInput: number,
+    cacheWriteInput: number,
     output: number,
     allInput: number,
   ): number {
@@ -160,6 +283,7 @@ export class UsageCalculator {
     return (
       (uncachedInput * rates.input +
         cachedInput * rates.cachedInput +
+        cacheWriteInput * (rates.cacheWrite ?? rates.input) +
         output * rates.output) /
       1_000_000
     );
@@ -178,6 +302,7 @@ export class UsageCalculator {
     return {
       input: pricing.longInput,
       cachedInput: pricing.longCachedInput,
+      cacheWrite: pricing.longCacheWrite ?? pricing.longInput,
       output: pricing.longOutput,
     };
   }
@@ -186,6 +311,7 @@ export class UsageCalculator {
     return [
       usage.input_tokens ?? 0,
       usage.cached_input_tokens ?? 0,
+      usage.cache_write_tokens ?? 0,
       usage.output_tokens ?? 0,
       usage.reasoning_output_tokens ?? 0,
       usage.total_tokens ?? 0,

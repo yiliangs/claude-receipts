@@ -12,6 +12,7 @@ export interface ResolvedSession {
   found: FoundSession;
 }
 
+/** Create a provider explicitly for programmatic library use. */
 export function providerByName(name: ProviderName): SessionProvider {
   if (name === "claude") return new ClaudeProvider();
   if (name === "codex") return new CodexProvider();
@@ -60,11 +61,11 @@ export async function detectProvider(
 /** Find the newest matching session across both provider stores. */
 export async function findSession(
   query?: string,
-  requestedProvider?: ProviderName,
 ): Promise<ResolvedSession> {
-  const providers = requestedProvider
-    ? [providerByName(requestedProvider)]
-    : [new ClaudeProvider(), new CodexProvider()];
+  const providers: SessionProvider[] = [
+    new ClaudeProvider(),
+    new CodexProvider(),
+  ];
   const results = await Promise.all(
     providers.map(async (provider) => {
       try {
@@ -76,11 +77,10 @@ export async function findSession(
   );
   const matches = results.filter((x): x is ResolvedSession => x !== null);
   if (matches.length === 0) {
-    const scope = requestedProvider || "Claude or Codex";
     throw new Error(
       query
-        ? `No ${scope} session matching "${query}".`
-        : `No ${scope} sessions found.`,
+        ? `No Claude Code or Codex session matching "${query}".`
+        : "No Claude Code or Codex sessions found.",
     );
   }
   matches.sort((a, b) => b.found.mtimeMs - a.found.mtimeMs);

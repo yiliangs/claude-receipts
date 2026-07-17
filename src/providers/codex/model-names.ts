@@ -1,5 +1,7 @@
+import { normalizeModelId } from "./pricing.js";
+
 export function displayModelName(model: string): string {
-  const normalized = model.replace(/-\d{4}-\d{2}-\d{2}$/, "");
+  const normalized = normalizeModelId(model);
   if (normalized === "gpt-5.6-sol") return "GPT-5.6 Sol";
   if (normalized === "gpt-5.6-terra") return "GPT-5.6 Terra";
   if (normalized === "gpt-5.6-luna") return "GPT-5.6 Luna";

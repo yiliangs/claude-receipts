@@ -84,6 +84,7 @@ test("Codex rollout usage is deduped, split by model, and long-context priced", 
             last_token_usage: {
               input_tokens: 300000,
               cached_input_tokens: 200000,
+              cache_write_tokens: 80000,
               output_tokens: 1000,
               total_tokens: 301000,
             },
@@ -108,11 +109,12 @@ test("Codex rollout usage is deduped, split by model, and long-context priced", 
 
     assert.equal(detected.name, "codex");
     assert.equal(usage.sessionId, "11111111-1111-1111-1111-111111111111");
-    assert.equal(usage.inputTokens, 100600);
+    assert.equal(usage.inputTokens, 20600);
+    assert.equal(usage.cacheCreationTokens, 80000);
     assert.equal(usage.cacheReadTokens, 200400);
     assert.equal(usage.outputTokens, 1100);
     assert.equal(usage.totalTokens, 302100);
-    assert.equal(Number(usage.totalCost.toFixed(6)), 1.2481);
+    assert.equal(Number(usage.totalCost.toFixed(6)), 1.4481);
     assert.deepEqual(usage.modelsUsed, ["gpt-5.6-sol", "gpt-5.4"]);
     assert.deepEqual(provider.getUnknownModels(), []);
     assert.equal(transcript.sessionSlug, "build-usage-analytics");
@@ -121,6 +123,142 @@ test("Codex rollout usage is deduped, split by model, and long-context priced", 
     assert.equal(transcript.userMessageCount, 1);
     assert.equal(transcript.assistantMessageCount, 1);
 
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Codex prices the GPT-5.6 alias as Sol", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-usage-stat-test-"));
+  const path = join(dir, "rollout-alias.jsonl");
+  const usageEvent = {
+    input_tokens: 2000,
+    cached_input_tokens: 500,
+    cache_write_tokens: 1000,
+    output_tokens: 100,
+    total_tokens: 2100,
+  };
+
+  await writeFile(
+    path,
+    [
+      line("turn_context", { model: "gpt-5.6" }),
+      line("event_msg", {
+        type: "token_count",
+        info: {
+          total_token_usage: usageEvent,
+          last_token_usage: usageEvent,
+        },
+      }),
+    ].join("\n"),
+    "utf8",
+  );
+
+  try {
+    const provider = new CodexProvider();
+    const usage = await provider.calculateUsage(path, "fallback");
+
+    assert.equal(usage.inputTokens, 500);
+    assert.equal(usage.cacheCreationTokens, 1000);
+    assert.equal(usage.cacheReadTokens, 500);
+    assert.equal(usage.outputTokens, 100);
+    assert.equal(usage.totalTokens, 2100);
+    assert.equal(Number(usage.totalCost.toFixed(6)), 0.012);
+    assert.deepEqual(usage.modelsUsed, ["gpt-5.6-sol"]);
+    assert.equal(usage.modelBreakdowns[0].displayName, "GPT-5.6 Sol");
+    assert.deepEqual(provider.getUnknownModels(), []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Codex preserves per-turn usage and timestamps across days", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-usage-stat-turns-"));
+  const path = join(dir, "rollout-turns.jsonl");
+  const firstUsage = {
+    input_tokens: 1000,
+    cached_input_tokens: 400,
+    output_tokens: 100,
+    total_tokens: 1100,
+  };
+  const secondUsage = {
+    input_tokens: 2000,
+    cached_input_tokens: 500,
+    output_tokens: 200,
+    total_tokens: 2200,
+  };
+
+  await writeFile(
+    path,
+    [
+      line(
+        "turn_context",
+        { turn_id: "turn-july-15", model: "gpt-5.6-sol" },
+        "2026-07-15T23:50:00.000Z",
+      ),
+      line(
+        "event_msg",
+        {
+          type: "token_count",
+          info: {
+            total_token_usage: firstUsage,
+            last_token_usage: firstUsage,
+          },
+        },
+        "2026-07-15T23:55:00.000Z",
+      ),
+      line(
+        "turn_context",
+        { turn_id: "turn-july-16", model: "gpt-5.6-sol" },
+        "2026-07-16T00:10:00.000Z",
+      ),
+      line(
+        "event_msg",
+        {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 3000,
+              cached_input_tokens: 900,
+              output_tokens: 300,
+              total_tokens: 3300,
+            },
+            last_token_usage: secondUsage,
+          },
+        },
+        "2026-07-16T00:15:00.000Z",
+      ),
+    ].join("\n"),
+    "utf8",
+  );
+
+  try {
+    const provider = new CodexProvider();
+    const usage = await provider.calculateUsage(path, "fallback");
+
+    assert.deepEqual(
+      usage.turns.map((turn) => ({
+        id: turn.id,
+        endTime: turn.endTime,
+        totalTokens: turn.totalTokens,
+      })),
+      [
+        {
+          id: "turn-july-15",
+          endTime: "2026-07-15T23:55:00.000Z",
+          totalTokens: 1100,
+        },
+        {
+          id: "turn-july-16",
+          endTime: "2026-07-16T00:15:00.000Z",
+          totalTokens: 2200,
+        },
+      ],
+    );
+    assert.equal(
+      Number(usage.turns.reduce((sum, turn) => sum + turn.totalCost, 0).toFixed(6)),
+      Number(usage.totalCost.toFixed(6)),
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -236,8 +374,6 @@ test("detached Codex hook performs a quiet usage update", async () => {
         join(process.cwd(), "bin", "agent-usage-stat.js"),
         "capture",
         "--detach",
-        "--provider",
-        "codex",
         "--quiet",
       ], {
         cwd: process.cwd(),
@@ -286,6 +422,9 @@ test("detached Codex hook performs a quiet usage update", async () => {
     assert.equal(shard.provider, "codex");
     assert.equal(shard.total_tokens, 1100);
     assert.equal(shard.total_cost_usd, 0.002875);
+    assert.equal(shard.turns.length, 1);
+    assert.equal(shard.turns[0].turn_id, "turn-1");
+    assert.equal(shard.turns[0].total_tokens, 1100);
   } finally {
     await rm(home, { recursive: true, force: true });
   }

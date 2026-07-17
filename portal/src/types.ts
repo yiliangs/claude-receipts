@@ -19,8 +19,22 @@ export interface RawSession {
   totalTokens: number
   cost: number
   models: string[]
+  turns: RawTurn[]
   // "claude" for all pre-2026-07-09 shards; other providers when they land.
   provider: string
+}
+
+export interface RawTurn {
+  id: string
+  start: string
+  end: string
+  input: number
+  output: number
+  cacheCreate: number
+  cacheRead: number
+  totalTokens: number
+  cost: number
+  models: string[]
 }
 
 export interface Meta {

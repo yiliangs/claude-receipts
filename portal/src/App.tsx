@@ -163,6 +163,15 @@ export function App() {
         <div className="zero">loading ledger…</div>
       </div>
     )
+  if (LH.SESSIONS.length === 0)
+    return (
+      <div className="app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="zero" style={{ textAlign: 'center' }}>
+          <div className="big">Ready for your first session</div>
+          Use Claude Code or Codex, then open Agent Usage Stat again.
+        </div>
+      </div>
+    )
 
   const fmt = LH.fmt
   const allCost = LH.SESSIONS.reduce((a, s) => a + s.cost, 0)
