@@ -1,6 +1,6 @@
 {
   "name": "agent-usage-stat",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "A local usage analytics portal for Claude Code and Codex",
   "license": "MIT",
   "author": "Yiliang Shao <github.com/yiliangs>",

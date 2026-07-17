@@ -9,7 +9,7 @@ const program = new Command();
 program
   .name("agent-usage-stat")
   .description("Explore Claude Code and Codex usage in a local portal")
-  .version("2.0.0");
+  .version("2.0.1");
 
 program
   .command("capture")
