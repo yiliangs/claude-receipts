@@ -24,11 +24,6 @@ node -e "process.exit(Number(process.versions.node.split('.')[0]) >= 20 ? 0 : 1)
   false
 }
 
-if [ ! -d "node_modules" ]; then
-  echo "First run: installing portal dependencies..."
-  npm install
-fi
-
 echo ""
 echo "Stopping any previous portal server..."
 pids="$(lsof -ti tcp:4179 2>/dev/null || true)"
@@ -38,19 +33,8 @@ if [ -n "$pids" ]; then
 fi
 
 echo ""
-echo "Reconciling Codex turn records..."
-node "../bin/agent-usage-stat.js" sync --quiet
-
-echo ""
-echo "Refreshing portal data from logbook.d..."
-if ! npm run data --silent; then
-  echo "Portal data could not be refreshed. Check the configured data folder and try again."
-  false
-fi
-
-echo ""
 echo "Starting Agent Usage Stat at http://127.0.0.1:4179..."
 echo "Keep this window open while using the portal."
 echo ""
 trap - ERR
-npx vite --host 127.0.0.1 --port 4179 --open
+node "../bin/agent-usage-stat.js" portal

@@ -25,6 +25,10 @@
     "dist",
     "bin",
     "portal/scripts",
+    "portal/Agent-Usage-Stat.bat",
+    "portal/Agent-Usage-Stat.command",
+    "Initialize-Agent-Usage-Stat.bat",
+    "Initialize-Agent-Usage-Stat.command",
     "screenshot.png"
   ],
   "scripts": {

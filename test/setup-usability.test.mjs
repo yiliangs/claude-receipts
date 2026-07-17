@@ -322,6 +322,17 @@ test("health check validates each shard against its provider pricing", async () 
   }
 });
 
+test("one-click portal launchers delegate to the packaged portal command", async () => {
+  for (const launcher of [
+    "portal/Agent-Usage-Stat.bat",
+    "portal/Agent-Usage-Stat.command",
+  ]) {
+    const content = await readFile(join(process.cwd(), launcher), "utf8");
+    assert.match(content, /bin[\\/]agent-usage-stat\.js["']? portal/);
+    assert.doesNotMatch(content, /npm run data|npx vite/);
+  }
+});
+
 function runCli(args, home) {
   return new Promise((resolve, reject) => {
     const child = spawn(

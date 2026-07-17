@@ -10,31 +10,15 @@ if errorlevel 1 goto :node_missing
 node -e "process.exit(Number(process.versions.node.split('.')[0]) >= 20 ? 0 : 1)"
 if errorlevel 1 goto :node_old
 
-if not exist "node_modules" (
-  echo First run: installing portal dependencies...
-  call npm install
-  if errorlevel 1 goto :failed
-)
-
 echo.
 echo Stopping any previous portal server...
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr "LISTENING" ^| findstr ":4179 "') do taskkill /f /pid %%a >nul 2>nul
 
 echo.
-echo Reconciling Codex turn records...
-call node "..\bin\agent-usage-stat.js" sync --quiet
-if errorlevel 1 goto :data_failed
-
-echo.
-echo Refreshing portal data from logbook.d...
-call npm run data --silent
-if errorlevel 1 goto :data_failed
-
-echo.
 echo Starting Agent Usage Stat at http://127.0.0.1:4179...
 echo Keep this window open while using the portal.
 echo.
-call npx vite --host 127.0.0.1 --port 4179 --open
+call node "..\bin\agent-usage-stat.js" portal
 if errorlevel 1 goto :failed
 exit /b 0
 
@@ -46,11 +30,6 @@ goto :failed
 :node_old
 echo.
 echo Your Node.js version is too old. Install Node.js 20 or newer and try again.
-goto :failed
-
-:data_failed
-echo.
-echo Portal data could not be refreshed. Check the configured data folder and try again.
 goto :failed
 
 :failed
