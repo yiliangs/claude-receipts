@@ -1,6 +1,6 @@
 import { stdin } from "process";
 import { readFileSync, unlinkSync } from "fs";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import chalk from "chalk";
 import ora from "ora";
@@ -15,7 +15,7 @@ import { resolveUsageRoot } from "../utils/usage-root.js";
 import type { HookData } from "../types/session-hook.js";
 import type { SessionProvider } from "../types/provider.js";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface CaptureOptions {
   session?: string;
@@ -120,8 +120,9 @@ export class CaptureCommand {
 
   private async resolveCurrentBranch(cwd: string): Promise<string | null> {
     try {
-      const { stdout } = await execAsync(
-        `git -C "${cwd}" branch --show-current`,
+      const { stdout } = await execFileAsync(
+        "git",
+        ["-C", cwd, "branch", "--show-current"],
         { timeout: 1500, windowsHide: true },
       );
       return stdout.trim() || null;
