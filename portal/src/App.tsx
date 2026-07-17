@@ -10,22 +10,23 @@ import { Tokens } from './tokens'
 import { Projects } from './projects'
 import { Sessions } from './sessions'
 import { Drawer } from './drill'
+import type { Filters, RangeKey, ViewKey } from './types'
 
-const NAV = [
+const NAV: Array<{ key: ViewKey; label: string; icon: typeof LHI.Pulse }> = [
   { key: 'overview', label: 'Overview', icon: LHI.Pulse },
   { key: 'spend', label: 'Spend', icon: LHI.Coin },
   { key: 'tokens', label: 'Tokens', icon: LHI.Bolt },
   { key: 'projects', label: 'Projects', icon: LHI.Folder },
   { key: 'sessions', label: 'Sessions', icon: LHI.Table },
 ]
-const RANGES: [string, string][] = [
+const RANGES: [RangeKey, string][] = [
   ['7d', '7D'],
   ['14d', '14D'],
   ['30d', '30D'],
   ['90d', '90D'],
   ['all', 'ALL'],
 ]
-const HEADS: Record<string, [string, string]> = {
+const HEADS: Record<ViewKey, [string, string]> = {
   overview: ['Spend Overview', 'What is the API-equivalent cost, and where is it going?'],
   spend: ['Spend', 'Where the money goes — by project, model, machine, and session.'],
   tokens: ['Tokens', 'Token composition and how much work the cache is saving.'],
@@ -34,7 +35,7 @@ const HEADS: Record<string, [string, string]> = {
 }
 
 // prev-period filter (same dims, previous window) for KPI deltas
-function applyPrev(f: any) {
+function applyPrev(f: Filters) {
   const win = LHA.windowFor(f.range)
   const q = (f.search || '').trim().toLowerCase()
   const useR = f.providers?.size || 0, useP = f.projects.size, useM = f.machines.size, useF = f.models.size
@@ -58,8 +59,8 @@ function applyPrev(f: any) {
 export function App() {
   const [ready, setReady] = useState(false)
   const [loadErr, setLoadErr] = useState<string | null>(null)
-  const [view, setView] = useState('overview')
-  const [filters, setFilters] = useState({
+  const [view, setView] = useState<ViewKey>('overview')
+  const [filters, setFilters] = useState<Filters>({
     range: '30d',
     providers: new Set<string>(),
     projects: new Set<string>(),
@@ -104,9 +105,9 @@ export function App() {
     }
   }, [ready])
 
-  const set = (patch: any) => setFilters((f) => ({ ...f, ...patch }))
-  const toggleFilter = (dim: string, value: string) =>
-    setFilters((f: any) => {
+  const set = (patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch }))
+  const toggleFilter = (dim: 'providers' | 'projects' | 'machines' | 'models', value: string) =>
+    setFilters((f) => {
       const next = new Set(f[dim])
       next.has(value) ? next.delete(value) : next.add(value)
       return { ...f, [dim]: next }
@@ -125,7 +126,7 @@ export function App() {
     setView('sessions')
     setDrill(null)
   }
-  const goView = (v: string) => { setView(v); setDrill(null) }
+  const goView = (v: ViewKey) => { setView(v); setDrill(null) }
 
   // keyboard: / focuses search, esc closes
   useEffect(() => {

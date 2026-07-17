@@ -10,8 +10,9 @@
    TYPE rollups (input/output/cache) are exact — those columns are per session.
    ============================================================ */
 import { LH, familyOf } from './data'
+import type { Filters, RangeKey } from './types'
 
-function windowFor(range: string) {
+function windowFor(range: RangeKey) {
   const DAY = LH.DAY
   const END = LH.BUILD.getTime()
   const days = range === '7d' ? 7 : range === '14d' ? 14 : range === '30d' ? 30 : range === '90d' ? 90 : LH.SPAN + 1
@@ -25,7 +26,7 @@ function windowFor(range: string) {
 }
 
 // apply all filters → array of sessions
-function applyFilters(f: any) {
+function applyFilters(f: Filters) {
   const win = windowFor(f.range)
   const q = (f.search || '').trim().toLowerCase()
   const useR = f.providers?.size || 0, useP = f.projects.size, useM = f.machines.size, useF = f.models.size
