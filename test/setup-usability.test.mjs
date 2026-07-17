@@ -272,6 +272,56 @@ test("sync repairs a stale newer shard by rollout content, then stays idempotent
   }
 });
 
+test("health check validates each shard against its provider pricing", async () => {
+  const home = await mkdtemp(join(tmpdir(), "agent-usage-stat-health-"));
+  const dataRoot = join(home, "usage");
+  const shardDir = join(dataRoot, "logbook.d");
+  const now = new Date().toISOString();
+  const base = {
+    end_time: now,
+    input_tokens: 1,
+    output_tokens: 1,
+    cache_creation_tokens: 0,
+    cache_read_tokens: 0,
+    total_tokens: 2,
+    total_cost_usd: 0.01,
+    machine: "test-machine",
+  };
+
+  await mkdir(shardDir, { recursive: true });
+  await writeFile(
+    join(home, ".agent-usage-stat.config.json"),
+    JSON.stringify({ dataRoot }),
+  );
+  await writeFile(
+    join(shardDir, "claude.json"),
+    JSON.stringify({
+      ...base,
+      session_id: "claude",
+      provider: "claude",
+      models: ["claude-sonnet-4-6"],
+    }),
+  );
+  await writeFile(
+    join(shardDir, "codex.json"),
+    JSON.stringify({
+      ...base,
+      session_id: "codex",
+      provider: "codex",
+      models: ["gpt-5.6-sol"],
+    }),
+  );
+
+  try {
+    const result = await runNodeScript("scripts/health-check.mjs", home);
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /ok\s+all shard models priced/);
+    assert.doesNotMatch(result.output, /codex:gpt-5\.6-sol/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 function runCli(args, home) {
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -283,6 +333,21 @@ function runCli(args, home) {
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
+    let output = "";
+    child.stdout.on("data", (chunk) => (output += chunk));
+    child.stderr.on("data", (chunk) => (output += chunk));
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, output }));
+  });
+}
+
+function runNodeScript(script, home) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [join(process.cwd(), script)], {
+      cwd: process.cwd(),
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let output = "";
     child.stdout.on("data", (chunk) => (output += chunk));
     child.stderr.on("data", (chunk) => (output += chunk));

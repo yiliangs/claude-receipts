@@ -18,7 +18,7 @@
  *   RED  pricing misses in hook.log in the last 7 days (models billing $0 NOW)
  *   YEL  zero-cost shards with nonzero tokens (pricing-miss residue; regen if
  *        the transcript still exists)
- *   YEL  shard models missing from src/providers/claude/pricing.ts (after normalization)
+ *   YEL  shard models missing from their provider's pricing table
  *   YEL  a machine that used to write shards has gone quiet > 14 days
  *   YEL  token-column arithmetic mismatches
  *
@@ -33,6 +33,15 @@ const ROOT = resolveUsageRootFromDisk().root;
 const DIR = join(ROOT, "logbook.d");
 const LOCAL_DIR = join(HOME, ".agent-usage-stat", "projects", "logbook.d");
 const HOOK_LOG = join(HOME, ".agent-usage-stat", "hook.log");
+const pricing = {
+  claude: (await import("../dist/providers/claude/pricing.js")).priceFor,
+  codex: (await import("../dist/providers/codex/pricing.js")).priceFor,
+};
+
+const modelsArePriced = (provider, models) => {
+  const lookup = pricing[provider];
+  return !!lookup && models.every((model) => !!lookup(model));
+};
 
 let red = 0, yellow = 0;
 const fail = (msg) => { red++; console.log("RED  " + msg); };
@@ -66,7 +75,7 @@ if (LOCAL_DIR !== DIR && existsSync(LOCAL_DIR)) {
 } else ok("no local fallback fork");
 
 // ---- recent pricing misses ----
-// A miss whose model has SINCE been added to the table (and dist rebuilt) is
+// A miss whose model has SINCE been added to its provider table (and dist rebuilt) is
 // downgraded: the leak is plugged, only the already-written session may need a
 // regen. Only a model still absent from the table bills $0 on the next session.
 if (existsSync(HOOK_LOG)) {
@@ -75,14 +84,11 @@ if (existsSync(HOOK_LOG)) {
     const m = l.match(/^\[([0-9T:.\-]+Z)\]\s+pricing miss/);
     return m && Date.parse(m[1]) >= cutoff && !l.includes("<synthetic>");
   });
-  let tableNow = new Set();
-  try {
-    const distPricing = readFileSync(new URL("../dist/providers/claude/pricing.js", import.meta.url), "utf8");
-    tableNow = new Set([...distPricing.matchAll(/"(claude-[^"]+)":\s*\{/g)].map((m) => m[1]));
-  } catch { /* dist not built — treat all misses as live */ }
   const live = recent.filter((l) => {
-    const m = l.match(/models=([^\s]+)/);
-    return !(m && tableNow.has(m[1]));
+    const match = l.match(/pricing miss(?: provider=(\w+))? models=([^\s]+)/);
+    if (!match) return true;
+    const provider = match[1] || "claude";
+    return !modelsArePriced(provider, match[2].split(",").filter(Boolean));
   });
   if (live.length) fail(`${live.length} UNRESOLVED pricing miss(es) in the last 7 days — add the model to src/providers/claude/pricing.ts, run npm run build, regen the sessions:\n     ` + live.slice(-3).join("\n     "));
   else if (recent.length) warn(`${recent.length} pricing miss(es) in the last 7 days, model since added to the table — verify the affected session(s) were regenerated`);
@@ -100,20 +106,20 @@ if (zc.length) {
   for (const s of zc) warn(`zero-cost shard ${String(s.session_id).slice(0, 8)} (${String(s.end_time).slice(0, 10)}, ${s.total_tokens} tok, ${JSON.stringify(s.models)}) — regen if transcript exists`);
 } else ok("no new zero-cost shards with tokens");
 
-// ---- models vs pricing table ----
-try {
-  const pricingSrc = readFileSync(new URL("../src/providers/claude/pricing.ts", import.meta.url), "utf8");
-  const known = new Set([...pricingSrc.matchAll(/"(claude-[^"]+)":\s*\{/g)].map((m) => m[1]));
-  const norm = (m) => m.replace(/\[[^\]]*\]$/, "").replace(/-\d{8}$/, "");
-  const unk = new Set();
-  for (const s of shards) {
-    const models = Array.isArray(s.models) ? s.models : String(s.models || "").split(/[;,]/);
-    for (const m of models.map((x) => String(x).trim()).filter(Boolean)) {
-      if (!known.has(norm(m))) unk.add(norm(m));
-    }
+// ---- models vs provider pricing tables ----
+const unpriced = new Set();
+for (const shard of shards) {
+  const provider = shard.provider || "claude";
+  const models = Array.isArray(shard.models)
+    ? shard.models
+    : String(shard.models || "").split(/[;,]/);
+  for (const model of models.map((value) => String(value).trim()).filter(Boolean)) {
+    if (!modelsArePriced(provider, [model])) unpriced.add(`${provider}:${model}`);
   }
-  unk.size ? warn(`models not in pricing table: ${[...unk].join(", ")}`) : ok("all shard models priced");
-} catch { warn("could not read src/providers/claude/pricing.ts (run from repo root)"); }
+}
+unpriced.size
+  ? warn(`models not in provider pricing tables: ${[...unpriced].join(", ")}`)
+  : ok("all shard models priced");
 
 // ---- machine recency ----
 const lastByMachine = {};
