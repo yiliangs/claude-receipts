@@ -20,7 +20,7 @@ The hook log is `~/.agent-usage-stat/hook.log`.
 
 ```bash
 time (printf '' | node bin/agent-usage-stat.js capture --detach)
-time (printf '' | bash bin/run-hook.sh capture --detach --provider claude --quiet)
+time (printf '' | bash bin/run-hook.sh capture --detach --quiet)
 time node bin/agent-usage-stat.js --version
 ```
 
