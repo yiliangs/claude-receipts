@@ -13,41 +13,67 @@ import {
 } from "../utils/usage-root.js";
 import type { AppConfig } from "../types/config.js";
 
+export interface CommandHook {
+  type: string;
+  command: string;
+  commandWindows?: string;
+  timeout?: number;
+  statusMessage?: string;
+  async?: boolean;
+}
+
+export interface HookGroup {
+  matcher?: string;
+  hooks: CommandHook[];
+}
+
 interface ClaudeSettings {
   hooks?: {
-    SessionEnd?: Array<{
-      hooks: Array<{
-        type: string;
-        command: string;
-      }>;
-    }>;
+    SessionEnd?: HookGroup[];
     [key: string]: unknown;
   };
   [key: string]: unknown;
 }
 
-interface CommandHook {
-  type: "command";
-  command: string;
-  commandWindows?: string;
-  timeout?: number;
-  statusMessage?: string;
-}
-
 interface CodexHooksFile {
-  hooks?: Record<
-    string,
-    Array<{
-      matcher?: string;
-      hooks: CommandHook[];
-    }>
-  >;
+  hooks?: Record<string, HookGroup[]>;
   [key: string]: unknown;
 }
 
 export interface SetupOptions {
   uninstall?: boolean;
   provider?: "claude" | "codex" | "all";
+}
+
+export function isManagedUsageCommand(command: string): boolean {
+  const normalized = command.replace(/\\/g, "/").toLowerCase();
+  const managedExecutable =
+    normalized.includes("/bin/run-hook.sh") ||
+    normalized.includes("agent-usage-stat") ||
+    normalized.includes("claude-receipts");
+  const managedAction =
+    (/\bcapture\b/.test(normalized) && normalized.includes("--detach")) ||
+    /\bgenerate\b/.test(normalized);
+  return managedExecutable && managedAction;
+}
+
+export function withoutManagedHookGroups(
+  groups: HookGroup[],
+  provider: "claude" | "codex",
+): HookGroup[] {
+  return groups
+    .map((group) => ({
+      ...group,
+      hooks: group.hooks.filter((hook) => {
+        const commands = `${hook.command || ""} ${hook.commandWindows || ""}`;
+        const normalized = commands.toLowerCase();
+        if (!isManagedUsageCommand(commands)) return true;
+        if (provider === "codex") return !normalized.includes("--provider codex");
+        if (/\bgenerate\b/.test(normalized)) return false;
+        return normalized.includes("--provider codex");
+      }),
+    }))
+    .filter((group) => group.hooks.length > 0);
 }
 
 export class SetupCommand {
@@ -200,12 +226,13 @@ export class SetupCommand {
 
     // Read existing settings
     let settings: ClaudeSettings = {};
+    let settingsHadTrailingNewline = false;
 
     if (existsSync(this.settingsPath)) {
-      // Backup existing settings
-      const backupPath = `${this.settingsPath}.backup`;
+      // Keep each pre-change settings state recoverable across repeated setup runs.
       const content = await readFile(this.settingsPath, "utf-8");
-      await writeFile(backupPath, content, "utf-8");
+      settingsHadTrailingNewline = content.endsWith("\n");
+      await writeSettingsBackup(this.settingsPath, content);
 
       try {
         settings = JSON.parse(content);
@@ -250,17 +277,13 @@ export class SetupCommand {
         : normalized;
     // The thin shim detaches before Claude Code tears down the hook process.
     const hookCommand = `"${relPath}" capture --detach --provider claude --quiet`;
-    const existingHook = settings.hooks.SessionEnd.find((h) =>
-      h.hooks.some((hook) => this.isOurCommand(hook.command)),
+    const previousCount = settings.hooks.SessionEnd.length;
+    settings.hooks.SessionEnd = withoutManagedHookGroups(
+      settings.hooks.SessionEnd,
+      "claude",
     );
-
-    if (existingHook) {
+    if (settings.hooks.SessionEnd.length !== previousCount) {
       console.log(chalk.yellow("\n⚠ Hook already installed, updating..."));
-      // Remove old hook
-      settings.hooks.SessionEnd = settings.hooks.SessionEnd.filter(
-        (h) =>
-          !h.hooks.some((hook) => this.isOurCommand(hook.command)),
-      );
     }
 
     settings.hooks.SessionEnd.push({
@@ -275,7 +298,7 @@ export class SetupCommand {
     // Write settings
     await writeFile(
       this.settingsPath,
-      JSON.stringify(settings, null, 2),
+      JSON.stringify(settings, null, 2) + (settingsHadTrailingNewline ? "\n" : ""),
       "utf-8",
     );
   }
@@ -289,6 +312,8 @@ export class SetupCommand {
     }
 
     const content = await readFile(this.settingsPath, "utf-8");
+    const settingsHadTrailingNewline = content.endsWith("\n");
+    await writeSettingsBackup(this.settingsPath, content);
     let settings: ClaudeSettings;
 
     try {
@@ -301,9 +326,9 @@ export class SetupCommand {
       return;
     }
 
-    // Remove our hook
-    settings.hooks.SessionEnd = settings.hooks.SessionEnd.filter(
-      (h) => !h.hooks.some((hook) => this.isOurCommand(hook.command)),
+    settings.hooks.SessionEnd = withoutManagedHookGroups(
+      settings.hooks.SessionEnd,
+      "claude",
     );
 
     // Remove SessionEnd array if empty
@@ -319,7 +344,7 @@ export class SetupCommand {
     // Write settings
     await writeFile(
       this.settingsPath,
-      JSON.stringify(settings, null, 2),
+      JSON.stringify(settings, null, 2) + (settingsHadTrailingNewline ? "\n" : ""),
       "utf-8",
     );
   }
@@ -332,7 +357,7 @@ export class SetupCommand {
     let config: CodexHooksFile = {};
     if (existsSync(this.codexHooksPath)) {
       const content = await readFile(this.codexHooksPath, "utf-8");
-      await writeFile(`${this.codexHooksPath}.backup`, content, "utf-8");
+      await writeSettingsBackup(this.codexHooksPath, content);
       try {
         config = JSON.parse(content);
       } catch {
@@ -369,6 +394,7 @@ export class SetupCommand {
     if (!existsSync(this.codexHooksPath)) return;
 
     const content = await readFile(this.codexHooksPath, "utf-8");
+    await writeSettingsBackup(this.codexHooksPath, content);
     let config: CodexHooksFile;
     try {
       config = JSON.parse(content);
@@ -391,18 +417,8 @@ export class SetupCommand {
     );
   }
 
-  private withoutOurCodexHook(
-    groups: Array<{ matcher?: string; hooks: CommandHook[] }>,
-  ): Array<{ matcher?: string; hooks: CommandHook[] }> {
-    return groups
-      .map((group) => ({
-        ...group,
-        hooks: group.hooks.filter((hook) => {
-          const commands = `${hook.command} ${hook.commandWindows || ""}`;
-          return !(this.isOurCommand(commands) && commands.includes("--provider codex"));
-        }),
-      }))
-      .filter((group) => group.hooks.length > 0);
+  private withoutOurCodexHook(groups: HookGroup[]): HookGroup[] {
+    return withoutManagedHookGroups(groups, "codex");
   }
 
   private hookExecutablePaths(): {
@@ -439,9 +455,13 @@ export class SetupCommand {
     if (target === "codex") return "Codex Stop + SubagentStop";
     return "Claude and Codex";
   }
+}
 
-  /** Recognize this package's installed hooks. */
-  private isOurCommand(command: string): boolean {
-    return command.includes("agent-usage-stat");
-  }
+async function writeSettingsBackup(path: string, content: string): Promise<void> {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  await writeFile(
+    `${path}.backup-${timestamp}-${process.pid}`,
+    content,
+    "utf-8",
+  );
 }

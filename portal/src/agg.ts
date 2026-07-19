@@ -9,17 +9,14 @@
    (and tokens) to its PRIMARY model family (first model id listed). Token-
    TYPE rollups (input/output/cache) are exact — those columns are per session.
    ============================================================ */
+import { utcCalendarWindow } from '../../src/utils/utc-window.ts'
 import { LH, familyOf } from './data'
 
 function windowFor(range: string) {
   const DAY = LH.DAY
   const END = LH.BUILD.getTime()
   const days = range === '7d' ? 7 : range === '14d' ? 14 : range === '30d' ? 30 : range === '90d' ? 90 : LH.SPAN + 1
-  // Calendar window keyed on END time, anchored to UTC dates so this matches the
-  // terminal statusline (which slices the UTC ISO timestamp) to the dollar.
-  // start = UTC midnight of (today − days) ≡ `date -u -d "<days> days ago"`.
-  const c = new Date(END - days * DAY)
-  const start = Date.UTC(c.getUTCFullYear(), c.getUTCMonth(), c.getUTCDate())
+  const { startMs: start } = utcCalendarWindow(END, days)
   const unit = days <= 92 ? 'day' : 'week'
   return { days, start, end: END, prevStart: start - days * DAY, prevEnd: start, unit }
 }

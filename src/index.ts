@@ -24,10 +24,16 @@ export { TranscriptParser as CodexTranscriptParser } from "./providers/codex/tra
 export { ConfigManager } from "./core/config-manager.js";
 export { CaptureCommand } from "./commands/capture.js";
 export { PortalCommand } from "./commands/portal.js";
+export { SpendCommand } from "./commands/spend.js";
+export { summarizeSpend } from "./core/spend-summary.js";
 export {
   resolveUsageRoot,
   resolveUsageRootFromDisk,
   detectSharedUsageRoot,
+  driveMountCandidates,
+  shardDirectory,
+  usageRootCandidates,
+  usageRootCandidatesFromDisk,
 } from "./utils/usage-root.js";
 
 // Type exports
@@ -41,6 +47,10 @@ export type { ParsedTranscript } from "./types/transcript.js";
 export type { TranscriptMessage } from "./providers/claude/transcript-format.js";
 export type { CodexRolloutRecord } from "./providers/codex/transcript-format.js";
 export type { AppConfig } from "./types/config.js";
+export type {
+  SpendSummary,
+  SpendSummaryOptions,
+} from "./core/spend-summary.js";
 export type {
   HookData,
   SessionEndHookData,

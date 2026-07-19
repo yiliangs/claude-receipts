@@ -1,38 +1,22 @@
 #!/usr/bin/env node
-/**
- * health-check.mjs: integrity guard for the usage data pipeline.
- *
- * The logbook is one directory of per-session JSON shards (logbook.d/, see
- * migrate-csv-to-shards.mjs) that every consumer sums directly. This script
- * checks the invariants that keep those numbers trustworthy and exits 1 if
- * any RED finding fires, so it can run headless (cron / on demand) and fail
- * loudly instead of letting the dashboard drift quietly.
- *
- * Checks:
- *   RED  unparseable shards
- *   RED  a live logbook.csv reappeared next to logbook.d/ (a machine is
- *        running a pre-2026-06-29 clone — its rows are being IGNORED)
- *   RED  local-fallback shards exist (~/.agent-usage-stat/projects/logbook.d)
- *        — written while Drive was unmounted; invisible to portal/statusline
- *        until moved to the Drive dir
- *   RED  pricing misses in hook.log in the last 7 days (models billing $0 NOW)
- *   YEL  zero-cost shards with nonzero tokens (pricing-miss residue; regen if
- *        the transcript still exists)
- *   YEL  shard models missing from src/providers/claude/pricing.ts (after normalization)
- *   YEL  a machine that used to write shards has gone quiet > 14 days
- *   YEL  token-column arithmetic mismatches
- *
- * Usage: node scripts/health-check.mjs
- */
+/** Integrity guard for the usage-data pipeline. */
 import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { resolveUsageRootFromDisk } from "../dist/utils/usage-root.js";
+import { join, resolve } from "node:path";
+import {
+  resolveUsageRootFromDisk,
+  shardDirectory,
+  usageRootCandidatesFromDisk,
+} from "../dist/utils/usage-root.js";
+import { priceFor as claudePriceFor } from "../dist/providers/claude/pricing.js";
+import { priceFor as codexPriceFor } from "../dist/providers/codex/pricing.js";
 
 const HOME = process.env.USERPROFILE || process.env.HOME || "";
 const ROOT = resolveUsageRootFromDisk().root;
-const DIR = join(ROOT, "logbook.d");
-const LOCAL_DIR = join(HOME, ".agent-usage-stat", "projects", "logbook.d");
-const HOOK_LOG = join(HOME, ".agent-usage-stat", "hook.log");
+const DIR = shardDirectory(ROOT);
+const HOOK_LOGS = [
+  join(HOME, ".agent-usage-stat", "hook.log"),
+  join(HOME, ".claude-receipts", "hook.log"),
+];
 
 let red = 0, yellow = 0;
 const fail = (msg) => { red++; console.log("RED  " + msg); };
@@ -44,95 +28,163 @@ if (!existsSync(DIR)) {
   process.exit(1);
 }
 
-// ---- load shards ----
 const shards = [];
-for (const f of readdirSync(DIR)) {
-  if (!f.toLowerCase().endsWith(".json")) continue;
-  try { shards.push(JSON.parse(readFileSync(join(DIR, f), "utf8"))); }
-  catch (e) { fail(`unparseable shard ${f}: ${e.message}`); }
-}
-ok(`${shards.length} shards parsed`);
-
-// ---- resurrected CSV ----
-if (existsSync(join(ROOT, "logbook.csv"))) {
-  fail("logbook.csv reappeared — some machine runs a pre-shard clone; its sessions are being DROPPED. Update that clone (git pull + npm run build), then re-run migrate-csv-to-shards.mjs.");
-} else ok("no legacy logbook.csv");
-
-// ---- forked local shards ----
-if (LOCAL_DIR !== DIR && existsSync(LOCAL_DIR)) {
-  const n = readdirSync(LOCAL_DIR).filter((f) => f.endsWith(".json")).length;
-  if (n) fail(`${n} shard(s) in local fallback ${LOCAL_DIR} — written while Drive was unmounted; move them to ${DIR}`);
-  else ok("local fallback dir empty");
-} else ok("no local fallback fork");
-
-// ---- recent pricing misses ----
-// A miss whose model has SINCE been added to the table (and dist rebuilt) is
-// downgraded: the leak is plugged, only the already-written session may need a
-// regen. Only a model still absent from the table bills $0 on the next session.
-if (existsSync(HOOK_LOG)) {
-  const cutoff = Date.now() - 7 * 86400000;
-  const recent = readFileSync(HOOK_LOG, "utf8").split(/\r?\n/).filter((l) => {
-    const m = l.match(/^\[([0-9T:.\-]+Z)\]\s+pricing miss/);
-    return m && Date.parse(m[1]) >= cutoff && !l.includes("<synthetic>");
-  });
-  let tableNow = new Set();
+for (const file of readdirSync(DIR)) {
+  if (!file.toLowerCase().endsWith(".json")) continue;
   try {
-    const distPricing = readFileSync(new URL("../dist/providers/claude/pricing.js", import.meta.url), "utf8");
-    tableNow = new Set([...distPricing.matchAll(/"(claude-[^"]+)":\s*\{/g)].map((m) => m[1]));
-  } catch { /* dist not built — treat all misses as live */ }
-  const live = recent.filter((l) => {
-    const m = l.match(/models=([^\s]+)/);
-    return !(m && tableNow.has(m[1]));
-  });
-  if (live.length) fail(`${live.length} UNRESOLVED pricing miss(es) in the last 7 days — add the model to src/providers/claude/pricing.ts, run npm run build, regen the sessions:\n     ` + live.slice(-3).join("\n     "));
-  else if (recent.length) warn(`${recent.length} pricing miss(es) in the last 7 days, model since added to the table — verify the affected session(s) were regenerated`);
-  else ok("no pricing misses in last 7 days");
-} else warn(`hook.log not found at ${HOOK_LOG}`);
+    const shard = JSON.parse(readFileSync(join(DIR, file), "utf8"));
+    if (!shard || typeof shard !== "object" || Array.isArray(shard)) {
+      throw new Error("expected a JSON object");
+    }
+    shards.push(shard);
+  } catch (error) { fail(`unparseable shard ${file}: ${error.message}`); }
+}
+ok(`${shards.length} shards parsed from ${DIR}`);
 
-// ---- zero-cost shards with tokens ----
-// Baseline: two 2026-04-23 opus-4-7 sessions priced $0 in a pricing-miss
-// window; transcripts long gone, ~$2.40 combined (estimated from their own
-// token columns). Permanent — anything beyond these is new residue.
-const KNOWN_ZERO = new Set(["a615a2cf", "e5f5e2c9"]);
-const zc = shards.filter((s) =>
-  (s.total_tokens || 0) > 0 && !(s.total_cost_usd > 0) && !KNOWN_ZERO.has(String(s.session_id).slice(0, 8)));
-if (zc.length) {
-  for (const s of zc) warn(`zero-cost shard ${String(s.session_id).slice(0, 8)} (${String(s.end_time).slice(0, 10)}, ${s.total_tokens} tok, ${JSON.stringify(s.models)}) — regen if transcript exists`);
-} else ok("no new zero-cost shards with tokens");
+if (existsSync(join(ROOT, "logbook.csv"))) {
+  fail("logbook.csv reappeared beside the canonical shard directory; update the stale writer and migrate explicitly");
+} else ok("no legacy logbook.csv beside canonical shards");
 
-// ---- models vs pricing table ----
-try {
-  const pricingSrc = readFileSync(new URL("../src/providers/claude/pricing.ts", import.meta.url), "utf8");
-  const known = new Set([...pricingSrc.matchAll(/"(claude-[^"]+)":\s*\{/g)].map((m) => m[1]));
-  const norm = (m) => m.replace(/\[[^\]]*\]$/, "").replace(/-\d{8}$/, "");
-  const unk = new Set();
-  for (const s of shards) {
-    const models = Array.isArray(s.models) ? s.models : String(s.models || "").split(/[;,]/);
-    for (const m of models.map((x) => String(x).trim()).filter(Boolean)) {
-      if (!known.has(norm(m))) unk.add(norm(m));
+const candidateRoots = usageRootCandidatesFromDisk().map((candidate) => candidate.root);
+const alternateRoots = [...new Set(candidateRoots.map((root) => resolve(root)))].filter(
+  (root) => resolve(root) !== resolve(ROOT),
+);
+const usageFields = [
+  "total_tokens",
+  "input_tokens",
+  "output_tokens",
+  "cache_creation_tokens",
+  "cache_read_tokens",
+  "total_cost_usd",
+];
+const metric = (shard, field) =>
+  typeof shard[field] === "number" && Number.isFinite(shard[field])
+    ? shard[field]
+    : null;
+let forkCount = 0, supersededCount = 0;
+for (const root of alternateRoots) {
+  const directory = shardDirectory(root);
+  if (!existsSync(directory)) continue;
+  const files = readdirSync(directory).filter((file) => file.toLowerCase().endsWith(".json"));
+  const missing = files.filter((file) => !existsSync(join(DIR, file)));
+  const duplicates = files.filter((file) => existsSync(join(DIR, file)));
+  const unsafeDuplicates = [];
+  for (const file of duplicates) {
+    try {
+      const alternate = JSON.parse(readFileSync(join(directory, file), "utf8"));
+      const canonical = JSON.parse(readFileSync(join(DIR, file), "utf8"));
+      const alternateEnd = Date.parse(alternate.end_time || alternate.start_time || "");
+      const canonicalEnd = Date.parse(canonical.end_time || canonical.start_time || "");
+      const alternateProvider = alternate.provider || "claude";
+      const canonicalProvider = canonical.provider || "claude";
+      const invalidMetric = usageFields.some((field) =>
+        metric(alternate, field) === null || metric(canonical, field) === null);
+      const higherUsage = usageFields.some((field) =>
+        metric(alternate, field) > metric(canonical, field) + 1e-9);
+      if (
+        alternateProvider !== canonicalProvider ||
+        invalidMetric ||
+        !Number.isFinite(alternateEnd) ||
+        !Number.isFinite(canonicalEnd) ||
+        alternateEnd > canonicalEnd ||
+        higherUsage
+      ) {
+        unsafeDuplicates.push(file);
+      }
+    } catch {
+      unsafeDuplicates.push(file);
     }
   }
-  unk.size ? warn(`models not in pricing table: ${[...unk].join(", ")}`) : ok("all shard models priced");
-} catch { warn("could not read src/providers/claude/pricing.ts (run from repo root)"); }
+  if (missing.length) {
+    forkCount += missing.length;
+    fail(`${missing.length} shard(s) exist only outside the canonical root at ${directory}; reconcile deliberately without deleting either source`);
+  }
+  if (unsafeDuplicates.length) {
+    forkCount += unsafeDuplicates.length;
+    fail(`${unsafeDuplicates.length} alternate shard(s) are newer, costlier, or unreadable at ${directory}; compare them before cleanup`);
+  }
+  const superseded = duplicates.length - unsafeDuplicates.length;
+  if (superseded) {
+    supersededCount += superseded;
+    warn(`${superseded} superseded duplicate shard(s) remain at ${directory}; canonical copies are at least as current and costly`);
+  }
+}
+if (!forkCount && !supersededCount) ok("no alternate-root shard fork");
 
-// ---- machine recency ----
+const recentMisses = [];
+const cutoff = Date.now() - 7 * 86_400_000;
+for (const path of HOOK_LOGS) {
+  if (!existsSync(path)) continue;
+  for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
+    const timestamp = line.match(/^\[([0-9T:.\-]+Z)\]\s+pricing miss/);
+    if (!timestamp || Date.parse(timestamp[1]) < cutoff || line.includes("<synthetic>")) continue;
+    recentMisses.push(line);
+  }
+}
+const unresolvedMisses = recentMisses.filter((line) => {
+  const provider = line.match(/provider=([^\s]+)/)?.[1] || "claude";
+  const models = line.match(/models=([^\s]+)/)?.[1]?.split(",") || [];
+  const priceFor = provider === "codex" ? codexPriceFor : claudePriceFor;
+  return models.some((model) => !priceFor(model));
+});
+if (unresolvedMisses.length) {
+  fail(`${unresolvedMisses.length} unresolved pricing miss(es) in the last 7 days:\n     ${unresolvedMisses.slice(-3).join("\n     ")}`);
+} else if (recentMisses.length) {
+  warn(`${recentMisses.length} recent pricing miss(es) now covered by pricing tables; verify affected sessions were regenerated`);
+} else ok("no pricing misses in last 7 days");
+
+const KNOWN_ZERO = new Set(["a615a2cf", "e5f5e2c9"]);
+const zeroCost = shards.filter((shard) =>
+  (shard.total_tokens || 0) > 0 &&
+  !(shard.total_cost_usd > 0) &&
+  !KNOWN_ZERO.has(String(shard.session_id).slice(0, 8)));
+if (zeroCost.length) {
+  for (const shard of zeroCost) {
+    warn(`zero-cost shard ${String(shard.session_id).slice(0, 8)} (${String(shard.end_time).slice(0, 10)}, ${shard.total_tokens} tok, ${JSON.stringify(shard.models)}); regenerate if the transcript exists`);
+  }
+} else ok("no new zero-cost shards with tokens");
+
+const unknownModels = new Set();
+for (const shard of shards) {
+  const provider = shard.provider || "claude";
+  if (provider !== "claude" && provider !== "codex") {
+    unknownModels.add(`${provider}:<unsupported-provider>`);
+    continue;
+  }
+  const priceFor = provider === "codex" ? codexPriceFor : claudePriceFor;
+  const models = Array.isArray(shard.models)
+    ? shard.models
+    : String(shard.models || "").split(/[;,]/);
+  for (const model of models.map((value) => String(value).trim()).filter(Boolean)) {
+    if (!priceFor(model)) unknownModels.add(`${provider}:${model}`);
+  }
+}
+unknownModels.size
+  ? warn(`models not in provider pricing tables: ${[...unknownModels].join(", ")}`)
+  : ok("all shard models priced by their provider");
+
 const lastByMachine = {};
-for (const s of shards) {
-  const d = String(s.end_time || "").slice(0, 10);
-  const m = s.machine || "?";
-  if (!lastByMachine[m] || d > lastByMachine[m]) lastByMachine[m] = d;
+for (const shard of shards) {
+  const date = String(shard.end_time || "").slice(0, 10);
+  const machine = shard.machine || "?";
+  if (!lastByMachine[machine] || date > lastByMachine[machine]) lastByMachine[machine] = date;
 }
-for (const [m, d] of Object.entries(lastByMachine)) {
-  const age = Math.floor((Date.now() - Date.parse(d)) / 86400000);
+for (const [machine, date] of Object.entries(lastByMachine)) {
+  const age = Math.floor((Date.now() - Date.parse(date)) / 86_400_000);
   age > 14
-    ? warn(`machine ${m}: no shards for ${age} days (last ${d}) — unused, or its clone/hook is broken`)
-    : ok(`machine ${m}: last shard ${d}`);
+    ? warn(`machine ${machine}: no shards for ${age} days (last ${date})`)
+    : ok(`machine ${machine}: last shard ${date}`);
 }
 
-// ---- token arithmetic ----
-const bad = shards.filter((s) =>
-  (s.input_tokens||0)+(s.output_tokens||0)+(s.cache_creation_tokens||0)+(s.cache_read_tokens||0) !== (s.total_tokens||0));
-bad.length ? warn(`${bad.length} shard(s) with token-column arithmetic mismatch`) : ok("token columns consistent");
+const arithmeticMismatches = shards.filter((shard) =>
+  (shard.input_tokens || 0) +
+  (shard.output_tokens || 0) +
+  (shard.cache_creation_tokens || 0) +
+  (shard.cache_read_tokens || 0) !==
+  (shard.total_tokens || 0));
+arithmeticMismatches.length
+  ? warn(`${arithmeticMismatches.length} shard(s) with token-column arithmetic mismatch`)
+  : ok("token columns consistent");
 
 console.log(`\n${red} red, ${yellow} yellow across ${shards.length} shards`);
 process.exit(red ? 1 : 0);

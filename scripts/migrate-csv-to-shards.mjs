@@ -1,139 +1,359 @@
 #!/usr/bin/env node
 /**
- * migrate-csv-to-shards.mjs — one-shot: fold the frozen legacy logbook.csv into
- * logbook.d/ so the shard directory becomes the SINGLE source of truth.
- *
- * Why: with two sources, every consumer (portal build-data, terminal
- * statusline) had to re-implement the same merge/de-dup rules, and they
- * drifted — a session recorded in the CSV era and re-recorded as a shard after
- * a resume was double-counted by the statusline ($6,026) but de-duped by the
- * portal ($5,831). One directory keyed by session_id (shard filename IS the
- * session id) makes duplicates structurally impossible and reduces every
- * consumer to "sum the shards".
- *
- * Semantics: an existing shard always wins over its CSV row (same rule
- * build-data used). Rows without a session_id get the writer's fallback name.
- * After a successful apply the CSV is renamed to logbook.csv.migrated-<date>.bak
- * — nothing is deleted.
- *
- * Usage:
- *   node scripts/migrate-csv-to-shards.mjs           # dry run — report only
- *   node scripts/migrate-csv-to-shards.mjs --apply   # write shards + retire CSV
+ * One-shot migration of the frozen, Claude-only legacy logbook.csv into
+ * canonical per-session shards. Dry-run is the default. Existing shards are
+ * never overwritten automatically.
  */
-import { readFileSync, writeFileSync, existsSync, readdirSync, renameSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  readdirSync,
+  renameSync,
+  mkdirSync,
+  unlinkSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import {
+  resolveUsageRootFromDisk,
+  usageRootCandidatesFromDisk,
+} from "../dist/utils/usage-root.js";
 
-const APPLY = process.argv.includes("--apply");
-const home = process.env.USERPROFILE || process.env.HOME || "";
-const CSV = existsSync("H:/My Drive")
-  ? "H:/My Drive/agent-usage-stat/logbook.csv"
-  : join(home, ".agent-usage-stat", "projects", "logbook.csv");
-const SHARD_DIR = resolve(dirname(CSV), "logbook.d");
+const EXPECTED_HEADER = [
+  "timestamp",
+  "session_slug",
+  "session_id",
+  "project",
+  "branch",
+  "cwd",
+  "machine",
+  "location",
+  "start_time",
+  "end_time",
+  "duration_seconds",
+  "duration_human",
+  "input_tokens",
+  "output_tokens",
+  "cache_creation_tokens",
+  "cache_read_tokens",
+  "total_tokens",
+  "total_cost_usd",
+  "models",
+];
+const NUMERIC_FIELDS = [
+  "duration_seconds",
+  "input_tokens",
+  "output_tokens",
+  "cache_creation_tokens",
+  "cache_read_tokens",
+  "total_tokens",
+  "total_cost_usd",
+];
 
+const args = process.argv.slice(2);
+const APPLY = args.includes("--apply");
+const csvArg = args.find((arg) => arg.startsWith("--csv="));
+const rootArg = args.find((arg) => arg.startsWith("--root="));
+const CSV = selectCsvPath(csvArg, rootArg);
+
+if (!CSV) {
+  console.log("nothing to migrate: no logbook.csv found in any configured, current, transitional, or legacy root");
+  process.exit(0);
+}
 if (!existsSync(CSV)) {
-  console.log(`nothing to migrate: ${CSV} not found (already retired?)`);
+  console.log(`nothing to migrate: ${CSV} not found`);
   process.exit(0);
 }
 
-// RFC-4180-ish line parser (same as build-data.mjs)
-function parseLine(line) {
-  const out = [];
-  let cur = "", q = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (c === '"') {
-      if (q && line[i + 1] === '"') { cur += '"'; i++; }
-      else q = !q;
-    } else if (c === "," && !q) { out.push(cur); cur = ""; }
-    else cur += c;
+const SHARD_DIR = resolve(dirname(CSV), "logbook.d");
+console.log(`source CSV: ${CSV}`);
+console.log(`target shards: ${SHARD_DIR}`);
+
+function selectCsvPath(explicitCsv, explicitRoot) {
+  if (explicitCsv) return resolve(explicitCsv.slice("--csv=".length));
+  if (explicitRoot) return resolve(explicitRoot.slice("--root=".length), "logbook.csv");
+
+  // Broad discovery is intentional here. This one-shot tool must locate
+  // pre-v2 CSVs that can live outside the current runtime data root.
+  const roots = [
+    resolveUsageRootFromDisk().root,
+    ...usageRootCandidatesFromDisk().map((candidate) => candidate.root),
+  ];
+  const seen = new Set();
+  const matches = [];
+  for (const root of roots) {
+    const path = resolve(root, "logbook.csv");
+    const key = process.platform === "win32" ? path.toLowerCase() : path;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (existsSync(path)) matches.push(path);
   }
-  out.push(cur);
-  return out;
+
+  if (matches.length > 1) {
+    console.error(
+      "multiple legacy CSV files found; pass --csv=<path> or --root=<path> explicitly:\n  " +
+      matches.join("\n  "),
+    );
+    process.exit(1);
+  }
+  return matches[0] || null;
 }
-const num = (v) => {
-  const n = Number(typeof v === "string" ? v.trim() : v);
-  return Number.isFinite(n) ? n : 0;
-};
 
-const lines = readFileSync(CSV, "utf8").split(/\r?\n/).filter((l) => l.trim().length);
-const header = parseLine(lines[0]).map((h) => h.trim());
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
 
-const existing = new Set(
-  existsSync(SHARD_DIR)
-    ? readdirSync(SHARD_DIR).filter((f) => f.toLowerCase().endsWith(".json"))
-    : [],
-);
-
-let migrated = 0, skippedShardWins = 0, skippedMalformed = 0, noId = 0;
-const anomalies = [];
-
-for (let li = 1; li < lines.length; li++) {
-  const r = parseLine(lines[li]);
-  if (r.length < header.length) {
-    skippedMalformed++;
-    anomalies.push(`line ${li + 1}: ${r.length}/${header.length} fields — skipped`);
-    continue;
-  }
-  const rec = {};
-  header.forEach((h, i) => { rec[h] = r[i]; });
-
-  if (Number.isNaN(Date.parse(rec.start_time))) {
-    anomalies.push(`line ${li + 1}: unparseable start_time "${rec.start_time}"`);
-  }
-
-  // Field order and shape mirror LogbookRecord (logbook-writer.ts).
-  const shard = {
-    timestamp: rec.timestamp || "",
-    session_slug: rec.session_slug || "",
-    session_id: rec.session_id || "",
-    project: rec.project || "",
-    branch: rec.branch || "",
-    cwd: rec.cwd || "",
-    machine: rec.machine || "",
-    location: rec.location || "",
-    start_time: rec.start_time || "",
-    end_time: rec.end_time || "",
-    duration_seconds: num(rec.duration_seconds),
-    duration_human: rec.duration_human || "",
-    input_tokens: num(rec.input_tokens),
-    output_tokens: num(rec.output_tokens),
-    cache_creation_tokens: num(rec.cache_creation_tokens),
-    cache_read_tokens: num(rec.cache_read_tokens),
-    total_tokens: num(rec.total_tokens),
-    total_cost_usd: num(rec.total_cost_usd),
-    models: String(rec.models || "").split(/[;,]/).map((m) => m.trim()).filter(Boolean),
+  const finishField = () => {
+    row.push(field);
+    field = "";
+  };
+  const finishRow = () => {
+    finishField();
+    if (row.some((value) => value.trim())) rows.push(row);
+    row = [];
   };
 
-  if (!shard.session_id) noId++;
-  const base = shard.session_id || `${shard.session_slug || "session"}-${shard.end_time}`;
-  const name = `${base.replace(/[^A-Za-z0-9._-]/g, "_")}.json`;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (quoted) {
+      if (char === '"') {
+        if (text[index + 1] === '"') {
+          field += '"';
+          index++;
+        } else {
+          quoted = false;
+        }
+      } else {
+        field += char;
+      }
+      continue;
+    }
 
-  if (existing.has(name)) {
-    skippedShardWins++;
-    console.log(`  shard wins over CSV row: ${name} (csv $${shard.total_cost_usd.toFixed(2)})`);
+    if (char === '"') {
+      if (field.length > 0) throw new Error("unexpected quote in unquoted field");
+      quoted = true;
+    } else if (char === ",") {
+      finishField();
+    } else if (char === "\n") {
+      finishRow();
+    } else if (char !== "\r") {
+      field += char;
+    }
+  }
+
+  if (quoted) throw new Error("unterminated quoted field");
+  if (field.length > 0 || row.length > 0) finishRow();
+  return rows;
+}
+
+function requireExactHeader(header) {
+  if (
+    header.length !== EXPECTED_HEADER.length ||
+    header.some((name, index) => name.trim() !== EXPECTED_HEADER[index])
+  ) {
+    throw new Error(
+      "unsupported CSV schema; expected exactly:\n  " +
+      EXPECTED_HEADER.join(","),
+    );
+  }
+}
+
+function requireNumber(record, field, lineNumber) {
+  const raw = record[field];
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new Error(`line ${lineNumber}: ${field} is required`);
+  }
+  const value = Number(raw.trim());
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`line ${lineNumber}: ${field} must be a finite nonnegative number`);
+  }
+  return value;
+}
+
+function requireTimestamp(value, field, lineNumber) {
+  if (!value || !Number.isFinite(Date.parse(value))) {
+    throw new Error(`line ${lineNumber}: ${field} must be a valid timestamp`);
+  }
+  return value;
+}
+
+function shardName(shard) {
+  const base = shard.session_id || `${shard.session_slug || "session"}-${shard.end_time}`;
+  return `${base.replace(/[^A-Za-z0-9._-]/g, "_")}.json`;
+}
+
+function buildShard(record, lineNumber) {
+  const numbers = Object.fromEntries(
+    NUMERIC_FIELDS.map((field) => [field, requireNumber(record, field, lineNumber)]),
+  );
+
+  // The legacy CSV predates Codex support and contains Claude sessions only.
+  return {
+    provider: "claude",
+    timestamp: record.timestamp || "",
+    session_slug: record.session_slug || "",
+    session_id: record.session_id || "",
+    project: record.project || "",
+    branch: record.branch || "",
+    cwd: record.cwd || "",
+    machine: record.machine || "",
+    location: record.location || "",
+    start_time: requireTimestamp(record.start_time, "start_time", lineNumber),
+    end_time: requireTimestamp(record.end_time, "end_time", lineNumber),
+    duration_seconds: numbers.duration_seconds,
+    duration_human: record.duration_human || "",
+    input_tokens: numbers.input_tokens,
+    output_tokens: numbers.output_tokens,
+    cache_creation_tokens: numbers.cache_creation_tokens,
+    cache_read_tokens: numbers.cache_read_tokens,
+    total_tokens: numbers.total_tokens,
+    total_cost_usd: numbers.total_cost_usd,
+    models: String(record.models || "").split(/[;,]/).map((model) => model.trim()).filter(Boolean),
+  };
+}
+
+function isValidShard(path) {
+  try {
+    const shard = JSON.parse(readFileSync(path, "utf8"));
+    const timestamp = Date.parse(shard.end_time || shard.start_time || "");
+    return (
+      shard &&
+      typeof shard === "object" &&
+      !Array.isArray(shard) &&
+      Number.isFinite(timestamp) &&
+      typeof shard.total_tokens === "number" &&
+      Number.isFinite(shard.total_tokens) &&
+      shard.total_tokens >= 0 &&
+      typeof shard.total_cost_usd === "number" &&
+      Number.isFinite(shard.total_cost_usd) &&
+      shard.total_cost_usd >= 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+function writeShardAtomically(path, shard, index) {
+  const temporary = `${path}.tmp-${process.pid}-${index}`;
+  try {
+    writeFileSync(temporary, JSON.stringify(shard, null, 2), "utf8");
+    renameSync(temporary, path);
+  } catch (error) {
+    try { unlinkSync(temporary); } catch { /* best-effort cleanup */ }
+    throw error;
+  }
+}
+
+function uniqueBackupPath(csvPath) {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  for (let counter = 0; counter < 1000; counter++) {
+    const suffix = counter ? `-${counter}` : "";
+    const candidate = csvPath.replace(/\.csv$/, `.csv.migrated-${timestamp}-${process.pid}${suffix}.bak`);
+    if (!existsSync(candidate)) return candidate;
+  }
+  throw new Error("could not reserve a unique CSV backup path");
+}
+
+let rows;
+try {
+  rows = parseCsv(readFileSync(CSV, "utf8"));
+  if (!rows.length) throw new Error("CSV is empty");
+  requireExactHeader(rows[0]);
+} catch (error) {
+  console.error(`refusing migration: ${error.message}`);
+  process.exit(1);
+}
+
+const header = rows[0].map((name) => name.trim());
+const validExisting = new Set();
+const invalidExisting = new Set();
+if (existsSync(SHARD_DIR)) {
+  for (const file of readdirSync(SHARD_DIR).filter((name) => name.toLowerCase().endsWith(".json"))) {
+    (isValidShard(join(SHARD_DIR, file)) ? validExisting : invalidExisting).add(file);
+  }
+}
+
+if (invalidExisting.size) {
+  console.error(
+    `refusing migration: ${invalidExisting.size} invalid existing shard(s) require explicit reconciliation before CSV retirement:\n  ` +
+    [...invalidExisting].join("\n  "),
+  );
+  process.exit(1);
+}
+
+const candidates = new Map();
+const errors = [];
+let noId = 0;
+for (let rowIndex = 1; rowIndex < rows.length; rowIndex++) {
+  const lineNumber = rowIndex + 1;
+  const row = rows[rowIndex];
+  if (row.length !== header.length) {
+    errors.push(`line ${lineNumber}: expected ${header.length} fields, found ${row.length}`);
     continue;
   }
 
-  if (APPLY) writeFileSync(join(SHARD_DIR, name), JSON.stringify(shard, null, 2), "utf-8");
-  existing.add(name); // csv-internal duplicate sids: first row wins, later ones reported
-  migrated++;
+  const record = Object.fromEntries(header.map((name, index) => [name, row[index]]));
+  try {
+    const shard = buildShard(record, lineNumber);
+    if (!shard.session_id) noId++;
+    const name = shardName(shard);
+    const prior = candidates.get(name);
+    if (prior) {
+      errors.push(
+        `line ${lineNumber}: output collision with line ${prior.lineNumber} at ${name}`,
+      );
+      continue;
+    }
+    candidates.set(name, { name, shard, lineNumber });
+  } catch (error) {
+    errors.push(error.message);
+  }
 }
 
-console.log(`\n${APPLY ? "APPLIED" : "DRY RUN"}: ${migrated} rows -> shards, ` +
-  `${skippedShardWins} superseded by existing shards, ${skippedMalformed} malformed skipped, ${noId} without session_id`);
-for (const a of anomalies) console.log("  anomaly:", a);
+if (errors.length) {
+  console.error(
+    `refusing migration: ${errors.length} CSV validation error(s):\n  ` +
+    errors.join("\n  "),
+  );
+  process.exit(1);
+}
+
+const pendingWrites = [];
+let skippedShardWins = 0;
+for (const candidate of candidates.values()) {
+  if (validExisting.has(candidate.name)) {
+    skippedShardWins++;
+    console.log(
+      `  shard wins over CSV row: ${candidate.name} ` +
+      `(csv $${candidate.shard.total_cost_usd.toFixed(2)})`,
+    );
+  } else {
+    pendingWrites.push(candidate);
+  }
+}
+
+console.log(
+  `\n${APPLY ? "APPLY" : "DRY RUN"}: ${pendingWrites.length} rows -> shards, ` +
+  `${skippedShardWins} superseded by valid existing shards, ${noId} without session_id`,
+);
 
 if (APPLY) {
-  const bak = CSV.replace(/\.csv$/, `.csv.migrated-${new Date().toISOString().slice(0, 10)}.bak`);
-  renameSync(CSV, bak);
-  console.log(`CSV retired -> ${bak}`);
+  const backup = uniqueBackupPath(CSV);
+  mkdirSync(SHARD_DIR, { recursive: true });
+  pendingWrites.forEach(({ name, shard }, index) =>
+    writeShardAtomically(join(SHARD_DIR, name), shard, index));
 
-  // verify: total over shards must equal the old merged (shard-wins) total
-  let total = 0, n = 0;
-  for (const f of readdirSync(SHARD_DIR)) {
-    if (!f.toLowerCase().endsWith(".json")) continue;
-    total += num(JSON.parse(readFileSync(join(SHARD_DIR, f), "utf8")).total_cost_usd);
-    n++;
+  renameSync(CSV, backup);
+  console.log(`CSV retired -> ${backup}`);
+
+  let total = 0, count = 0;
+  for (const file of readdirSync(SHARD_DIR)) {
+    if (!file.toLowerCase().endsWith(".json")) continue;
+    const shard = JSON.parse(readFileSync(join(SHARD_DIR, file), "utf8"));
+    total += Number(shard.total_cost_usd) || 0;
+    count++;
   }
-  console.log(`verify: ${n} shards, lifetime total $${total.toFixed(2)}`);
+  console.log(`verify: ${count} shards, lifetime total $${total.toFixed(2)}`);
 }

@@ -54,6 +54,21 @@ program
   });
 
 program
+  .command("spend")
+  .description("Summarize recorded spend over a UTC calendar window")
+  .option("--days <number>", "Number of days to include", "30")
+  .option("--strict", "Fail instead of returning a partial total")
+  .addOption(
+    new Option("--format <format>", "Output format")
+      .choices(["human", "raw", "rounded", "json"])
+      .default("human"),
+  )
+  .action(async (options) => {
+    const { SpendCommand } = await import("./commands/spend.js");
+    await new SpendCommand().execute(options);
+  });
+
+program
   .command("setup")
   .description("Connect Claude Code and/or Codex")
   .addOption(
@@ -65,6 +80,34 @@ program
   .action(async (options) => {
     const { SetupCommand } = await import("./commands/setup.js");
     await new SetupCommand().execute(options);
+  });
+
+program
+  .command("generate", { hidden: true })
+  .description("Legacy compatibility alias for Claude usage capture")
+  .option("-s, --session <id>", "Specific session ID to record")
+  .option("--detach", "Spawn a detached capture worker and exit")
+  .option("--input-file <path>", "Read hook JSON from a file")
+  .option("-o, --output <formats...>", "Retired receipt output formats")
+  .option("-l, --location <location>", "Retired receipt location")
+  .option("--printer <printer>", "Retired receipt printer")
+  .option("--quiet", "Suppress console output")
+  .action(async (options) => {
+    if (options.detach) {
+      const { runDetachShim } = await import("./commands/detach-shim.js");
+      runDetachShim({ provider: "claude", quiet: true });
+      return;
+    }
+    if (!options.quiet) {
+      console.error("generate is deprecated; use capture --provider claude");
+    }
+    const { CaptureCommand } = await import("./commands/capture.js");
+    await new CaptureCommand().execute({
+      session: options.session,
+      inputFile: options.inputFile,
+      provider: "claude",
+      quiet: options.quiet,
+    });
   });
 
 if (process.argv.length === 2) process.argv.push("portal");
