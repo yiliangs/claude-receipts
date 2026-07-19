@@ -13,15 +13,25 @@
  * would underbill by up to ~12% of the cache-write cost (typically <2% of
  * total session cost).
  *
- * When Anthropic ships a new model, add an entry. Unknown models bill at $0
- * and emit a `unknownModel` warning to hook.log — better to underbill
- * visibly than to misbill silently against a stale rate.
+ * Claude Code can also route requests to GPT models. Those IDs reuse the
+ * canonical OpenAI table under providers/codex so the same model never drifts
+ * to different rates depending on which host tool produced the transcript.
+ * Unknown models bill at $0 and emit a pricing-miss warning to hook.log.
  */
+import {
+  LONG_CONTEXT_THRESHOLD,
+  priceFor as openAiPriceFor,
+} from "../codex/pricing.js";
+
 export interface ModelPricing {
   input: number;
   output: number;
   cacheWrite: number;
   cacheRead: number;
+  longInput?: number;
+  longOutput?: number;
+  longCacheWrite?: number;
+  longCacheRead?: number;
 }
 
 const PRICING: Record<string, ModelPricing> = {
@@ -65,13 +75,58 @@ const PRICING: Record<string, ModelPricing> = {
  * sessions fail the lookup and silently bill at $0.
  */
 export function normalizeModelId(model: string): string {
-  return model.replace(/\[[^\]]*\]$/, "").replace(/-\d{8}$/, "");
+  return model
+    .replace(/\[[^\]]*\]$/, "")
+    .replace(/-\d{8}$/, "")
+    .replace(/-\d{4}-\d{2}-\d{2}$/, "");
 }
 
 /**
- * Look up pricing for a model. Returns null for unknown models — callers
- * should record this in the hook log so stale tables surface visibly.
+ * Look up pricing for any model that can appear in a Claude Code transcript.
+ * GPT cache creations are ordinary uncached input; cache reads use OpenAI's
+ * discounted cached-input rate.
  */
 export function priceFor(model: string): ModelPricing | null {
-  return PRICING[normalizeModelId(model)] ?? null;
+  const normalized = normalizeModelId(model);
+  const anthropic = PRICING[normalized];
+  if (anthropic) return anthropic;
+
+  const openAi = openAiPriceFor(normalized);
+  if (!openAi) return null;
+
+  return {
+    input: openAi.input,
+    output: openAi.output,
+    cacheWrite: openAi.input,
+    cacheRead: openAi.cachedInput,
+    longInput: openAi.longInput,
+    longOutput: openAi.longOutput,
+    longCacheWrite: openAi.longInput,
+    longCacheRead: openAi.longCachedInput,
+  };
+}
+
+/** Apply OpenAI's full-request long-context premium when the model has one. */
+export function priceForRequest(
+  model: string,
+  inputTokens: number,
+): ModelPricing | null {
+  const pricing = priceFor(model);
+  if (
+    !pricing ||
+    inputTokens <= LONG_CONTEXT_THRESHOLD ||
+    pricing.longInput === undefined ||
+    pricing.longOutput === undefined ||
+    pricing.longCacheWrite === undefined ||
+    pricing.longCacheRead === undefined
+  ) {
+    return pricing;
+  }
+
+  return {
+    input: pricing.longInput,
+    output: pricing.longOutput,
+    cacheWrite: pricing.longCacheWrite,
+    cacheRead: pricing.longCacheRead,
+  };
 }

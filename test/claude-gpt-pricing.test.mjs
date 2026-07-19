@@ -1,0 +1,68 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { UsageCalculator } from "../dist/providers/claude/usage-calculator.js";
+
+function assistant(id, usage) {
+  return JSON.stringify({
+    type: "assistant",
+    timestamp: "2026-07-18T00:00:00.000Z",
+    message: {
+      id,
+      role: "assistant",
+      model: "gpt-5.6-sol",
+      content: [{ type: "text", text: "done" }],
+      usage,
+    },
+  });
+}
+
+test("Claude transcripts dedupe GPT responses and apply OpenAI request pricing", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-usage-stat-claude-gpt-"));
+  const sessionId = "44444444-4444-4444-4444-444444444444";
+  const path = join(dir, `${sessionId}.jsonl`);
+  const standardUsage = {
+    input_tokens: 1_000,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 400,
+    output_tokens: 100,
+  };
+  const longContextUsage = {
+    input_tokens: 100_000,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 200_000,
+    output_tokens: 1_000,
+  };
+
+  await writeFile(
+    path,
+    [
+      assistant("resp_standard", standardUsage),
+      assistant("resp_standard", standardUsage),
+      assistant("resp_standard", standardUsage),
+      assistant("resp_long", longContextUsage),
+      assistant("resp_long", longContextUsage),
+    ].join("\n"),
+    "utf8",
+  );
+
+  try {
+    const calculator = new UsageCalculator();
+    const usage = await calculator.calculate(path, sessionId);
+
+    assert.equal(usage.provider, "claude");
+    assert.equal(usage.inputTokens, 101_000);
+    assert.equal(usage.cacheCreationTokens, 0);
+    assert.equal(usage.cacheReadTokens, 200_400);
+    assert.equal(usage.outputTokens, 1_100);
+    assert.equal(usage.totalTokens, 302_500);
+    assert.equal(Number(usage.totalCost.toFixed(6)), 1.2532);
+    assert.deepEqual(usage.modelsUsed, ["gpt-5.6-sol"]);
+    assert.equal(usage.modelBreakdowns[0].displayName, "GPT-5.6 Sol");
+    assert.deepEqual(calculator.getUnknownModels(), []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

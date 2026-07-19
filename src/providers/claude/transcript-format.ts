@@ -20,8 +20,8 @@ export interface TranscriptMessage {
       cache_read_input_tokens?: number;
     };
   };
-  // Anthropic request id (e.g. "req_…"); pairs with message.id to identify
-  // one billing event across the repeated lines of a multi-block turn.
+  // Anthropic request id (e.g. "req_…"). GPT-routed Claude Code responses
+  // omit it, so billing deduplication uses the response/message id itself.
   requestId?: string;
   slug?: string;
   sessionId?: string;

@@ -10,8 +10,8 @@ import type { ParsedTranscript } from "../../types/transcript.js";
 
 /**
  * Claude Code sessions: transcripts under `~/.claude/projects/`, per-message
- * `message.usage` billing events (deduped by message.id+requestId, subagent
- * trees scanned recursively), Anthropic pricing.
+ * `message.usage` billing events (deduped by message.id, subagent trees scanned
+ * recursively), with pricing selected from the actual Claude or GPT model ID.
  */
 export class ClaudeProvider implements SessionProvider {
   readonly name = "claude" as const;
