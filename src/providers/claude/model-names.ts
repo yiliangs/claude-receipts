@@ -6,11 +6,23 @@ import { normalizeModelId } from "./pricing.js";
  * alias — normalizeModelId strips date suffixes ("-20251001") and context
  * variant suffixes ("[1m]") so every shape of the same model resolves here.
  *
- * Keep this list in sync with the PRICING table in pricing.ts: any model that
- * can be billed should also render with a proper name.
+ * Keep this list in sync with Claude pricing.ts and the shared GPT rates it
+ * resolves through providers/codex/pricing.ts.
  */
 const DISPLAY_NAMES: Record<string, string> = {
-  // Current generation (June 2026)
+  // GPT models routed through Claude Code
+  "gpt-5.6-sol": "GPT-5.6 Sol",
+  "gpt-5.6-terra": "GPT-5.6 Terra",
+  "gpt-5.6-luna": "GPT-5.6 Luna",
+  "gpt-5.5": "GPT-5.5",
+  "gpt-5.5-pro": "GPT-5.5 Pro",
+  "gpt-5.4": "GPT-5.4",
+  "gpt-5.4-mini": "GPT-5.4 Mini",
+  "gpt-5.4-nano": "GPT-5.4 Nano",
+  "gpt-5.4-pro": "GPT-5.4 Pro",
+  "gpt-5.3-codex": "GPT-5.3 Codex",
+
+  // Current Claude generation (June 2026)
   "claude-fable-5": "Claude Fable 5",
   "claude-opus-4-8": "Claude Opus 4.8",
   "claude-opus-4-7": "Claude Opus 4.7",

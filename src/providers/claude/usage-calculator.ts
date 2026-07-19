@@ -1,7 +1,7 @@
 import { readFile, readdir } from "fs/promises";
 import { existsSync } from "fs";
 import { join, dirname, basename } from "path";
-import { priceFor, normalizeModelId } from "./pricing.js";
+import { priceForRequest, normalizeModelId } from "./pricing.js";
 import { displayModelName } from "./model-names.js";
 import { expandHome } from "../../utils/paths.js";
 import type { TranscriptMessage } from "./transcript-format.js";
@@ -12,6 +12,7 @@ interface ModelTotals {
   outputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
+  cost: number;
 }
 
 /**
@@ -50,8 +51,9 @@ export class UsageCalculator {
     // as N JSONL lines that share message.id + requestId and REPEAT the same
     // usage object — the usage is for the whole API response, not per block.
     // Summing every line multi-counts the same billing event (observed 3-5×,
-    // ~3× cost inflation overall). Dedupe by message.id+requestId, matching
-    // ccusage. Lines missing either id can't be deduped, so we count them.
+    // ~3× cost inflation overall). Dedupe by message.id, which identifies one
+    // API response. GPT responses omit requestId, so requiring both fields would
+    // count every repeated content-block line.
     // The set is shared across the main transcript and all subagent files —
     // a billing event must count exactly once no matter where it appears.
     const seenBillingKeys = new Set<string>();
@@ -68,8 +70,7 @@ export class UsageCalculator {
     let totalCacheRead = 0;
 
     for (const [model, t] of totalsByModel) {
-      const cost = this.costFor(model, t);
-      totalCost += cost;
+      totalCost += t.cost;
       totalInput += t.inputTokens;
       totalOutput += t.outputTokens;
       totalCacheCreate += t.cacheCreationTokens;
@@ -82,7 +83,7 @@ export class UsageCalculator {
         outputTokens: t.outputTokens,
         cacheCreationTokens: t.cacheCreationTokens,
         cacheReadTokens: t.cacheReadTokens,
-        cost,
+        cost: t.cost,
       });
     }
 
@@ -207,41 +208,46 @@ export class UsageCalculator {
 
       // Skip repeated lines of the same multi-block turn (see seenBillingKeys).
       const msgId = msg.message.id;
-      const reqId = msg.requestId;
-      if (msgId && reqId) {
-        const key = `${msgId}:${reqId}`;
-        if (seenBillingKeys.has(key)) continue;
-        seenBillingKeys.add(key);
+      if (msgId) {
+        if (seenBillingKeys.has(msgId)) continue;
+        seenBillingKeys.add(msgId);
       }
 
       const u = msg.message.usage;
+
+      const inputTokens = Math.max(0, u.input_tokens || 0);
+      const outputTokens = Math.max(0, u.output_tokens || 0);
+      const cacheCreationTokens = Math.max(
+        0,
+        u.cache_creation_input_tokens || 0,
+      );
+      const cacheReadTokens = Math.max(0, u.cache_read_input_tokens || 0);
+      const pricing = priceForRequest(
+        model,
+        inputTokens + cacheCreationTokens + cacheReadTokens,
+      );
+      if (!pricing) this.unknownModels.add(model);
 
       const totals = totalsByModel.get(model) ?? {
         inputTokens: 0,
         outputTokens: 0,
         cacheCreationTokens: 0,
         cacheReadTokens: 0,
+        cost: 0,
       };
-      totals.inputTokens += u.input_tokens || 0;
-      totals.outputTokens += u.output_tokens || 0;
-      totals.cacheCreationTokens += u.cache_creation_input_tokens || 0;
-      totals.cacheReadTokens += u.cache_read_input_tokens || 0;
+      totals.inputTokens += inputTokens;
+      totals.outputTokens += outputTokens;
+      totals.cacheCreationTokens += cacheCreationTokens;
+      totals.cacheReadTokens += cacheReadTokens;
+      if (pricing) {
+        totals.cost +=
+          (inputTokens * pricing.input +
+            outputTokens * pricing.output +
+            cacheCreationTokens * pricing.cacheWrite +
+            cacheReadTokens * pricing.cacheRead) /
+          1_000_000;
+      }
       totalsByModel.set(model, totals);
     }
-  }
-
-  private costFor(model: string, t: ModelTotals): number {
-    const p = priceFor(model);
-    if (!p) {
-      this.unknownModels.add(normalizeModelId(model));
-      return 0;
-    }
-    return (
-      (t.inputTokens * p.input +
-        t.outputTokens * p.output +
-        t.cacheCreationTokens * p.cacheWrite +
-        t.cacheReadTokens * p.cacheRead) /
-      1_000_000
-    );
   }
 }
