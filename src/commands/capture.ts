@@ -1,10 +1,15 @@
 import { stdin } from "process";
-import { readFileSync, unlinkSync } from "fs";
+import { readFileSync } from "fs";
+import { unlink } from "fs/promises";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import chalk from "chalk";
 import ora from "ora";
 import { logHookEvent } from "../utils/hook-log.js";
+import {
+  correlatedCaptureFromInput,
+  publishCaptureOutcome,
+} from "../utils/capture-run.js";
 import {
   detectProvider,
   findSession,
@@ -14,6 +19,7 @@ import { LogbookWriter } from "../core/logbook-writer.js";
 import { resolveUsageRoot } from "../utils/usage-root.js";
 import type { HookData } from "../types/session-hook.js";
 import type { SessionProvider } from "../types/provider.js";
+import type { CaptureOutcome } from "../utils/capture-run.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -35,13 +41,16 @@ export class CaptureCommand {
     }).start();
     logHookEvent(`invoke pid=${process.pid} cwd=${process.cwd()}`);
 
+    let hookData: HookData | null = null;
+    let provider: SessionProvider | undefined;
+    let sessionId: string | undefined;
+    let outcome: CaptureOutcome | undefined;
+
     try {
-      const hookData = options.inputFile
+      hookData = options.inputFile
         ? this.readInputFile(options.inputFile)
         : await this.readStdinIfAvailable();
       let transcriptPath: string | undefined;
-      let sessionId: string | undefined;
-      let provider: SessionProvider;
 
       if (hookData) {
         transcriptPath =
@@ -85,6 +94,7 @@ export class CaptureCommand {
       }
 
       if (sessionData.totalTokens <= 0) {
+        outcome = { status: "no_usage", reason: "zero_tokens" };
         spinner.info("No token usage to record.");
         logHookEvent(`skip zero-token session=${sessionId ?? "?"}`);
         return;
@@ -105,16 +115,31 @@ export class CaptureCommand {
         sessionData,
         transcriptData,
       });
+      outcome = {
+        status: "recorded",
+        project: transcriptData.projectName || "",
+        total_tokens: sessionData.totalTokens,
+        shard_path: shardPath,
+      };
       logHookEvent(
         `done provider=${provider.name} tokens=${sessionData.totalTokens} cost=${sessionData.totalCost.toFixed(6)} shard=${shardPath}`,
       );
       spinner.succeed("Usage recorded.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
+      outcome = { status: "failed", message };
       spinner.fail("Failed to record usage.");
       logHookEvent(`fatal: ${message}`);
       if (!options.quiet) console.error(chalk.red(`Error: ${message}`));
       process.exitCode = 1;
+    } finally {
+      if (options.inputFile) {
+        await this.finishInputFile(options.inputFile, outcome, {
+          hookEventName: hookData?.hook_event_name,
+          provider: provider?.name,
+          sessionId,
+        });
+      }
     }
   }
 
@@ -131,19 +156,49 @@ export class CaptureCommand {
     }
   }
 
-  private readInputFile(path: string): HookData | null {
+  private readInputFile(path: string): HookData {
     try {
       return JSON.parse(readFileSync(path, "utf-8")) as HookData;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       logHookEvent(`input-file read failed (${path}): ${message}`);
-      return null;
-    } finally {
-      try {
-        unlinkSync(path);
-      } catch {
-        // Best-effort cleanup.
-      }
+      throw new Error(`Failed to read hook input: ${message}`);
+    }
+  }
+
+  private async finishInputFile(
+    path: string,
+    outcome: CaptureOutcome | undefined,
+    details: {
+      hookEventName?: string;
+      provider?: SessionProvider["name"];
+      sessionId?: string;
+    },
+  ): Promise<void> {
+    const correlated = correlatedCaptureFromInput(path);
+    if (!correlated) {
+      await this.removeInputFile(path);
+      return;
+    }
+    if (!outcome) return;
+
+    try {
+      const published = await publishCaptureOutcome(path, outcome, details);
+      if (!published) return;
+      await this.removeInputFile(path);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      logHookEvent(
+        `result publish failed run=${correlated.runId} capture=${correlated.captureId}: ${message}`,
+      );
+    }
+  }
+
+  private async removeInputFile(path: string): Promise<void> {
+    try {
+      await unlink(path);
+    } catch {
+      // Best-effort cleanup. A matching result still resolves correlated work.
     }
   }
 

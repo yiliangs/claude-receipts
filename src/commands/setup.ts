@@ -9,6 +9,11 @@ import ora from "ora";
 import { ConfigManager } from "../core/config-manager.js";
 import { expandHome, homeDir } from "../utils/paths.js";
 import { resolveUsageRoot } from "../utils/usage-root.js";
+import {
+  detectShellProfile,
+  installTerminalWrappers,
+  removeTerminalWrappers,
+} from "../core/terminal-wrappers.js";
 import type { AppConfig } from "../types/config.js";
 import type { ProviderName } from "../types/provider.js";
 
@@ -47,6 +52,7 @@ interface CodexHooksFile {
 export interface SetupOptions {
   uninstall?: boolean;
   dataRoot?: string;
+  terminalMessage?: boolean;
 }
 
 export function detectInstalledAgents(
@@ -87,7 +93,7 @@ export class SetupCommand {
       if (options.uninstall) {
         await this.uninstall();
       } else {
-        await this.install(options.dataRoot);
+        await this.install(options.dataRoot, options.terminalMessage !== false);
       }
     } catch (error) {
       if (error instanceof Error) {
@@ -100,7 +106,10 @@ export class SetupCommand {
   }
 
   /** Detect installed agents, choose one data directory, and install hooks. */
-  private async install(dataRootOption?: string): Promise<void> {
+  private async install(
+    dataRootOption?: string,
+    terminalMessage = true,
+  ): Promise<void> {
     const agents = detectInstalledAgents();
     if (agents.length === 0) {
       throw new Error(
@@ -136,6 +145,8 @@ export class SetupCommand {
 
     try {
       let codexNeedsTrust = false;
+      let terminalProfile: string | undefined;
+      let terminalWarning: string | undefined;
       const config: AppConfig = {
         ...existing,
         dataRoot,
@@ -153,6 +164,10 @@ export class SetupCommand {
       }
       spinner.text = "Agent hooks installed...";
 
+      const terminal = await this.configureTerminalMessage(terminalMessage);
+      terminalProfile = terminal.profile;
+      terminalWarning = terminal.warning;
+
       spinner.succeed("Initialization complete");
 
       if (agents.includes("claude")) {
@@ -168,6 +183,18 @@ export class SetupCommand {
           );
         }
       }
+      if (terminalProfile) {
+        const action = terminalMessage ? "enabled" : "disabled";
+        console.log(
+          chalk.green(`\nSame-terminal usage message ${action}: ${terminalProfile}`),
+        );
+        if (terminalMessage) {
+          console.log(chalk.gray("Open a new terminal for the command wrappers."));
+        }
+      }
+      if (terminalWarning) {
+        console.log(chalk.yellow(`\nTerminal message setup skipped: ${terminalWarning}`));
+      }
       console.log(chalk.cyan(`\nUsage data: ${dataRoot}\n`));
     } catch (error) {
       spinner.fail("Setup failed");
@@ -182,8 +209,19 @@ export class SetupCommand {
     try {
       await this.removeHookFromSettings();
       await this.removeCodexHooks();
+      const terminal = await this.configureTerminalMessage(false);
       spinner.succeed("Agent hooks removed");
 
+      if (terminal.profile) {
+        console.log(
+          chalk.gray(`  Terminal wrappers removed from ${terminal.profile}.`),
+        );
+      }
+      if (terminal.warning) {
+        console.log(
+          chalk.yellow(`  Terminal wrapper cleanup skipped: ${terminal.warning}`),
+        );
+      }
       console.log(
         chalk.gray(
           '  Config file preserved. Use "config --reset" to reset it.\n',
@@ -192,6 +230,28 @@ export class SetupCommand {
     } catch (error) {
       spinner.fail("Uninstall failed");
       throw error;
+    }
+  }
+
+  private async configureTerminalMessage(
+    enabled: boolean,
+  ): Promise<{ profile?: string; warning?: string }> {
+    const profile = detectShellProfile();
+    if (!profile) {
+      return { warning: "no supported PowerShell, zsh, or bash profile was found" };
+    }
+
+    try {
+      if (enabled) {
+        const { windowsBin } = this.hookExecutablePaths();
+        await installTerminalWrappers(profile, windowsBin);
+      } else {
+        await removeTerminalWrappers(profile);
+      }
+      return { profile: profile.path };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      return { warning: message };
     }
   }
 

@@ -5,6 +5,7 @@ import { Command } from "commander";
 // Commands are loaded lazily. The hook path must reach the detach shim without
 // loading provider parsers, the portal server, or any other worker code.
 const program = new Command();
+program.enablePositionalOptions();
 
 program
   .name("agent-usage-stat")
@@ -26,6 +27,19 @@ program
     }
     const { CaptureCommand } = await import("./commands/capture.js");
     await new CaptureCommand().execute(options);
+  });
+
+program
+  .command("run")
+  .description("Launch an agent and report verified usage in this terminal")
+  .argument("<agent>", "Agent command: claude, codex, or claudex")
+  .argument("[agent-args...]", "Arguments forwarded to the agent")
+  .allowUnknownOption()
+  .passThroughOptions()
+  .action(async (agent, agentArgs) => {
+    const { RunCommand } = await import("./commands/run.js");
+    const forwardedArgs = agentArgs[0] === "--" ? agentArgs.slice(1) : agentArgs;
+    process.exitCode = await new RunCommand().execute(agent, forwardedArgs);
   });
 
 program
@@ -67,6 +81,7 @@ program
   .command("setup")
   .description("Choose a usage folder and connect installed agents")
   .option("--data-root <path>", "Use this usage-data folder without prompting")
+  .option("--no-terminal-message", "Do not wrap agent commands for terminal status")
   .option("--uninstall", "Remove Agent Usage Stat hooks")
   .action(async (options) => {
     const { SetupCommand } = await import("./commands/setup.js");

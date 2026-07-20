@@ -6,6 +6,11 @@ import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { CodexProvider, detectProvider } from "../dist/index.js";
 import { LogbookWriter } from "../dist/core/logbook-writer.js";
+import {
+  createAgentRun,
+  removeAgentRun,
+  waitForAgentRun,
+} from "../dist/utils/capture-run.js";
 
 function line(type, payload, timestamp) {
   return JSON.stringify({ type, payload, timestamp });
@@ -368,6 +373,12 @@ test("detached Codex hook performs a quiet usage update", async () => {
     "utf8",
   );
 
+  const run = await createAgentRun("codex", {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+  });
+
   try {
     const result = await new Promise((resolve, reject) => {
       const child = spawn(process.execPath, [
@@ -382,6 +393,7 @@ test("detached Codex hook performs a quiet usage update", async () => {
           HOME: home,
           USERPROFILE: home,
           CODEX_HOME: codexHome,
+          AGENT_USAGE_STAT_RUN_ID: run.manifest.run_id,
         },
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -425,7 +437,18 @@ test("detached Codex hook performs a quiet usage update", async () => {
     assert.equal(shard.turns.length, 1);
     assert.equal(shard.turns[0].turn_id, "turn-1");
     assert.equal(shard.turns[0].total_tokens, 1100);
+
+    const settled = await waitForAgentRun(run, {
+      pollMs: 10,
+      quietMs: 20,
+      timeoutMs: 1000,
+    });
+    assert.equal(settled.timedOut, false);
+    assert.equal(settled.results.length, 1);
+    assert.equal(settled.results[0].status, "recorded");
+    assert.equal(settled.results[0].shard_path, shardPath);
   } finally {
+    await removeAgentRun(run);
     await rm(home, { recursive: true, force: true });
   }
 });

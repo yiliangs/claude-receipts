@@ -31,9 +31,11 @@ Everything upstream of `SessionUsage` and `ParsedTranscript` is provider-specifi
 ## Key modules
 
 - `src/commands/capture.ts`: session ingestion
+- `src/commands/run.ts`: current-terminal agent wrapper and completion status
 - `src/commands/portal.ts`: local portal server
-- `src/commands/setup.ts`: host hook installation
+- `src/commands/setup.ts`: host hook and shell-wrapper installation
 - `src/core/logbook-writer.ts`: idempotent per-session shard writer
+- `src/utils/capture-run.ts`: machine-local run and capture-result protocol
 - `src/utils/usage-root.ts`: the only data-root resolver
 - `portal/scripts/build-data.mjs`: browser artifact builder
 - `portal/src/`: analytics interface
@@ -47,6 +49,7 @@ Everything upstream of `SessionUsage` and `ParsedTranscript` is provider-specifi
 - Claude subagent usage includes recursively nested workflow transcripts.
 - `cli.ts`, `detach-shim.ts`, and `hook-log.ts` must remain import-light.
 - The detach shim reads at most the first 128 KB when checking Claude entrypoints.
+- Terminal feedback must fall back silently rather than weaken detached capture.
 - Keep `bin/run-hook.sh` and `portal/Agent-Usage-Stat.command` executable in Git.
 - Resolve machine-specific paths through `usage-root.ts`; do not hardcode them.
 - Before changing hook behavior, read `SESSIONEND-HOOK-LOG.md`.

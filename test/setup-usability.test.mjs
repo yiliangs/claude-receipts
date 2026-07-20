@@ -72,11 +72,29 @@ test(
       assert.equal(config.dataRoot, dataRoot);
       assert.equal(codexHooks.includes("--provider"), false);
       await readFile(join(home, ".claude", "settings.json"), "utf8");
+      const shellProfile = await readFile(
+        join(home, "shell-profile.ps1"),
+        "utf8",
+      );
+      assert.match(shellProfile, /function global:claude/);
+      assert.match(shellProfile, /function global:codex/);
+      assert.match(shellProfile, /function global:claudex/);
 
       const second = await runCli(["setup"], home);
       assert.equal(second.code, 0, second.output);
       assert.equal(second.output.includes("Usage data folder"), false);
       assert.equal(second.output.includes("one final action"), false);
+      assert.equal(
+        await readFile(join(home, "shell-profile.ps1"), "utf8"),
+        shellProfile,
+      );
+
+      const disabled = await runCli(["setup", "--no-terminal-message"], home);
+      assert.equal(disabled.code, 0, disabled.output);
+      assert.doesNotMatch(
+        await readFile(join(home, "shell-profile.ps1"), "utf8"),
+        /Agent Usage Stat terminal message/,
+      );
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -340,7 +358,12 @@ function runCli(args, home) {
       [join(process.cwd(), "bin", "agent-usage-stat.js"), ...args],
       {
         cwd: process.cwd(),
-        env: { ...process.env, HOME: home, USERPROFILE: home },
+        env: {
+          ...process.env,
+          HOME: home,
+          USERPROFILE: home,
+          AGENT_USAGE_STAT_SHELL_PROFILE: join(home, "shell-profile.ps1"),
+        },
         stdio: ["ignore", "pipe", "pipe"],
       },
     );

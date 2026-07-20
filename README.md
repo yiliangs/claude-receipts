@@ -26,6 +26,20 @@ That folder is the only setting. The initializer detects the operating system an
 
 Codex requires one security confirmation before it can run a new hook. If Codex asks, open `/hooks` and trust the Agent Usage Stat hook. This confirmation cannot be completed by the initializer.
 
+Open a new terminal after setup. The normal `claude`, `codex`, and `claudex`
+commands then print one verified status line after the agent exits:
+
+```text
+[Agent Usage Stat] Usage recorded: Claude, 18.6M tokens, my-project
+```
+
+The line appears in the same terminal, not in a popup. It is printed only after
+the detached capture worker has completed its shard write and read-back check.
+Use `agent-usage-stat setup --no-terminal-message` to keep silent capture without
+shell command wrappers. The explicit fallback is
+`agent-usage-stat run claude -- <arguments>`, with `codex` or `claudex` accepted
+in place of `claude`.
+
 After initialization, use the dedicated one-click portal launcher whenever you
 want a fresh portal: `portal/Agent-Usage-Stat.bat` on Windows or
 `portal/Agent-Usage-Stat.command` on macOS. It stops the previous local server,

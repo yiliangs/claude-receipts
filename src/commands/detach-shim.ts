@@ -11,6 +11,7 @@ import { tmpdir } from "os";
 import { randomBytes } from "crypto";
 import { spawn } from "child_process";
 import { logHookEvent } from "../utils/hook-log.js";
+import { createCorrelatedInputPath } from "../utils/capture-run.js";
 import type { HookData } from "../types/session-hook.js";
 
 /**
@@ -66,17 +67,38 @@ export function runDetachShim(options: DetachShimOptions): void {
     }
   }
 
-  const tmpFile = join(
+  const captureId = randomBytes(12).toString("hex");
+  const fallbackFile = join(
     tmpdir(),
-    `agent-usage-stat-hook-${Date.now()}-${randomBytes(4).toString("hex")}.json`,
+    `agent-usage-stat-hook-${Date.now()}-${captureId}.json`,
   );
+  const correlatedFile = createCorrelatedInputPath(
+    process.env.AGENT_USAGE_STAT_RUN_ID,
+    captureId,
+  );
+  let tmpFile = correlatedFile || fallbackFile;
 
   try {
     writeFileSync(tmpFile, raw, "utf-8");
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown";
-    logHookEvent(`shim temp write failed: ${msg}`);
-    return;
+    if (!correlatedFile) {
+      logHookEvent(`shim temp write failed: ${msg}`);
+      return;
+    }
+
+    logHookEvent(
+      `shim correlated write failed run=${process.env.AGENT_USAGE_STAT_RUN_ID} capture=${captureId}: ${msg}`,
+    );
+    tmpFile = fallbackFile;
+    try {
+      writeFileSync(tmpFile, raw, "utf-8");
+    } catch (fallbackError) {
+      const fallbackMessage =
+        fallbackError instanceof Error ? fallbackError.message : "unknown";
+      logHookEvent(`shim temp write failed: ${fallbackMessage}`);
+      return;
+    }
   }
 
   const args = [process.argv[1], "capture", "--input-file", tmpFile];
@@ -91,14 +113,22 @@ export function runDetachShim(options: DetachShimOptions): void {
       windowsHide: true,
     });
     child.unref();
-    logHookEvent(`shim spawned worker pid=${child.pid} tmp=${tmpFile}`);
+    const correlation =
+      correlatedFile && tmpFile === correlatedFile
+        ? ` run=${process.env.AGENT_USAGE_STAT_RUN_ID} capture=${captureId}`
+        : "";
+    logHookEvent(
+      `shim spawned worker pid=${child.pid} tmp=${tmpFile}${correlation}`,
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown";
     logHookEvent(`shim spawn failed: ${msg}`);
-    try {
-      unlinkSync(tmpFile);
-    } catch {
-      // best-effort cleanup
+    if (!correlatedFile || tmpFile !== correlatedFile) {
+      try {
+        unlinkSync(tmpFile);
+      } catch {
+        // best-effort cleanup
+      }
     }
   }
 }

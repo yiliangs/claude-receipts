@@ -38,3 +38,26 @@ Manual checks validate startup and wiring. Only a real Claude Code `/exit` valid
 8. Keep `bin/run-hook.sh` executable in Git.
 
 The `AGENT_USAGE_STAT_ALL_SESSIONS=1` environment variable disables the Claude automation gate when SDK session capture is intentional.
+
+## Same-terminal completion status
+
+Setup installs shell functions for `claude`, `codex`, and `claudex`. Each
+function launches the real command through `agent-usage-stat run`, which owns
+the current terminal while the agent is active.
+
+The runner creates `~/.agent-usage-stat/runs/<run-id>/` and passes the run ID in
+`AGENT_USAGE_STAT_RUN_ID`. A hook input under `pending/` is the in-flight marker.
+The worker publishes one immutable result under `results/` only after recording
+reaches a terminal outcome. `recorded` means `LogbookWriter.append()` completed
+its shard write and read-back check. The runner waits for all pending work plus
+a short quiet period, prints one aggregate line, and preserves the agent's exit
+code.
+
+Terminal feedback is secondary to capture reliability:
+
+1. If correlated state cannot be created, the shim falls back to its normal
+   operating-system temp file and still spawns the worker.
+2. The shim never waits, polls, loads config, or writes to the terminal.
+3. A missing or timed-out result must never be reported as recorded.
+4. Claudex inherits the run ID and its underlying Claude `SessionEnd` hook
+   remains the source of the result.
