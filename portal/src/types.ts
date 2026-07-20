@@ -20,8 +20,12 @@ export interface RawSession {
   cost: number
   models: string[]
   turns: RawTurn[]
-  // "claude" for all pre-2026-07-09 shards; other providers when they land.
+  // Which host TOOL produced the session ("claude" for all pre-2026-07-09
+  // shards). Not the model vendor — Claude Code can route to GPT, so use
+  // byVendor for any "how much did I spend on OpenAI vs Anthropic" question.
   provider: string
+  // Spend and tokens split by model vendor ("anthropic" | "openai" | "unknown").
+  byVendor: Record<string, { cost: number; tokens: number }>
 }
 
 export interface RawTurn {
@@ -53,7 +57,8 @@ export type RangeKey = '7d' | '14d' | '30d' | '90d' | 'all'
 
 export interface Filters {
   range: RangeKey
-  providers: Set<string>
+  providers: Set<string> // host tool
+  vendors: Set<string> // model vendor — independent of providers
   projects: Set<string>
   machines: Set<string>
   models: Set<string> // model-family keys (opus / sonnet / haiku / fable / other)

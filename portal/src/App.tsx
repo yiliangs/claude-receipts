@@ -43,6 +43,7 @@ function applyPrev(f: Filters) {
   for (const s of LH.SESSIONS) {
     if (s.t < win.prevStart || s.t >= win.prevEnd) continue
     if (useR && !f.providers.has(s.provider)) continue
+    if (f.vendors?.size && !Object.keys(s.byVendor || {}).some((v) => f.vendors.has(v))) continue
     if (useP && !f.projects.has(s.project)) continue
     if (useM && !f.machines.has(s.machine)) continue
     if (useF && !s.models.some((m: string) => f.models.has(LHA.famOf(m)))) continue
@@ -63,6 +64,7 @@ export function App() {
   const [filters, setFilters] = useState<Filters>({
     range: '30d',
     providers: new Set<string>(),
+    vendors: new Set<string>(),
     projects: new Set<string>(),
     machines: new Set<string>(),
     models: new Set<string>(),
@@ -112,7 +114,7 @@ export function App() {
       next.has(value) ? next.delete(value) : next.add(value)
       return { ...f, [dim]: next }
     })
-  const clearAll = () => set({ providers: new Set(), projects: new Set(), machines: new Set(), models: new Set(), search: '' })
+  const clearAll = () => set({ providers: new Set(), vendors: new Set(), projects: new Set(), machines: new Set(), models: new Set(), search: '' })
 
   const win = useMemo(() => LHA.windowFor(filters.range), [filters.range, ready])
   const bks = useMemo(() => LHA.buckets(win), [win])
@@ -181,7 +183,7 @@ export function App() {
   filters.models.forEach((k) => activeChips.push({ dim: 'models', value: k, label: LH.FAM_BY[k]?.label || k, sw: LH.FAM_BY[k]?.color, ck: 'Model' }))
   filters.projects.forEach((p) => activeChips.push({ dim: 'projects', value: p, label: p, ck: 'Project' }))
   filters.machines.forEach((m) => activeChips.push({ dim: 'machines', value: m, label: m, ck: 'Machine' }))
-  const hasFilters = filters.providers.size > 0 || activeChips.length > 0 || filters.search
+  const hasFilters = filters.providers.size > 0 || filters.vendors.size > 0 || activeChips.length > 0 || filters.search
 
   const viewEl = (() => {
     switch (view) {
@@ -286,8 +288,25 @@ export function App() {
             ))}
           </div>
           <span className="fb-sep" />
+          <span className="fb-lab">Vendor</span>
+          <div className="daterange">
+            {[
+              ['', 'ALL'],
+              ['anthropic', 'ANTHROPIC'],
+              ['openai', 'OPENAI'],
+            ].map(([key, label]) => (
+              <button
+                key={label}
+                className={(key === '' ? filters.vendors.size === 0 : filters.vendors.has(key)) ? 'on' : ''}
+                onClick={() => set({ vendors: key ? new Set([key]) : new Set() })}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="fb-sep" />
           <span className="fb-lab">Filters</span>
-          {filters.providers.size === 0 && activeChips.length === 0 && !filters.search && (
+          {filters.providers.size === 0 && filters.vendors.size === 0 && activeChips.length === 0 && !filters.search && (
             <span className="chip empty"><span className="ck">none · click any chart element</span></span>
           )}
           {filters.search && (

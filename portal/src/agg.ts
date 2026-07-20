@@ -30,12 +30,14 @@ function applyFilters(f: Filters) {
   const win = windowFor(f.range)
   const q = (f.search || '').trim().toLowerCase()
   const useR = f.providers?.size || 0, useP = f.projects.size, useM = f.machines.size, useF = f.models.size
+  const useV = f.vendors?.size || 0
   const out: any[] = []
   const S = LH.SESSIONS
   for (let i = 0; i < S.length; i++) {
     const s = S[i]
     if (s.t < win.start || s.t > win.end) continue
     if (useR && !f.providers.has(s.provider)) continue
+    if (useV && !Object.keys(s.byVendor || {}).some((v) => f.vendors.has(v))) continue
     if (useP && !f.projects.has(s.project)) continue
     if (useM && !f.machines.has(s.machine)) continue
     if (useF && !s.models.some((m: string) => f.models.has(familyOf(m)))) continue

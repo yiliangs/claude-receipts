@@ -87,8 +87,20 @@ const PRICING: Record<string, ModelPricing> = {
   "gpt-5.3-codex": { input: 1.75, cachedInput: 0.175, output: 14 },
 };
 
+/**
+ * Rollout labels that name a Codex feature rather than a model. They carry real
+ * token usage, so leaving them unmapped bills that usage at $0. Each maps to the
+ * model that backed the feature when those rollouts were written — auto-review
+ * ran alongside gpt-5.5 (June 2026), five weeks before gpt-5.6-sol shipped.
+ * Revisit if a later Codex release rebases the feature onto a newer model.
+ */
+const FEATURE_LABEL_MODELS: Record<string, string> = {
+  "codex-auto-review": "gpt-5.5",
+};
+
 export function normalizeModelId(model: string): string {
   const normalized = model.replace(/-\d{4}-\d{2}-\d{2}$/, "");
+  if (FEATURE_LABEL_MODELS[normalized]) return FEATURE_LABEL_MODELS[normalized];
   return normalized === "gpt-5.6" ? "gpt-5.6-sol" : normalized;
 }
 

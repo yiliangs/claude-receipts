@@ -123,7 +123,58 @@ function normalizeSession(record) {
       ? record.turns.map(normalizeTurn).filter(Boolean)
       : [],
     provider: String(record.provider || "claude"),
+    byVendor: vendorSplit(record),
   };
+}
+
+/**
+ * Split a session's spend and tokens by MODEL VENDOR, which is independent of
+ * `provider` (the host tool). Claude Code can route to GPT, so charting spend by
+ * provider files OpenAI usage under Anthropic.
+ *
+ * Shards written from 2026-07-20 carry `model_breakdowns` and split exactly.
+ * Older shards only recorded model NAMES, so we attribute the session total to
+ * the single vendor its models belong to — exact unless a pre-2026-07-20 session
+ * mixed vendors, which none in the corpus do. A mixed legacy shard falls back to
+ * splitting by token share rather than silently picking one vendor.
+ */
+function vendorSplit(record) {
+  const split = {};
+  const add = (vendor, cost, tokens) => {
+    const bucket = (split[vendor] ??= { cost: 0, tokens: 0 });
+    bucket.cost += cost;
+    bucket.tokens += tokens;
+  };
+
+  if (Array.isArray(record.model_breakdowns) && record.model_breakdowns.length) {
+    for (const breakdown of record.model_breakdowns) {
+      add(
+        breakdown.vendor || vendorForModel(String(breakdown.model || "")),
+        number(breakdown.total_cost_usd),
+        number(breakdown.total_tokens),
+      );
+    }
+    return split;
+  }
+
+  const models = Array.isArray(record.models) ? record.models : [];
+  const vendors = [...new Set(models.map((m) => vendorForModel(String(m))))];
+  const cost = number(record.total_cost_usd);
+  const tokens = number(record.total_tokens);
+  if (vendors.length <= 1) {
+    add(vendors[0] || "unknown", cost, tokens);
+  } else {
+    for (const vendor of vendors) add(vendor, cost / vendors.length, tokens / vendors.length);
+  }
+  return split;
+}
+
+/** Mirrors src/core/model-vendor.ts — kept inline so the builder stays dist-free. */
+function vendorForModel(model) {
+  const id = model.trim().toLowerCase();
+  if (id.startsWith("claude")) return "anthropic";
+  if (id.startsWith("gpt") || id.startsWith("codex")) return "openai";
+  return "unknown";
 }
 
 function normalizeTurn(record) {

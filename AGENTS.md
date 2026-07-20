@@ -43,6 +43,8 @@ Everything upstream of `SessionUsage` and `ParsedTranscript` is provider-specifi
 ## Invariants
 
 - `logbook.d/` is the only spend source. Never revive or merge a shared CSV.
+- `provider` is the host tool; model vendor is a separate axis. Claude Code can route to GPT, so never pick a pricing table or a chart series by provider alone. Derive vendor per model via `src/core/model-vendor.ts`.
+- Persist `model_breakdowns` on every shard. Session totals alone cannot be split by vendor after the fact.
 - Never let a recomputation replace a recorded session with lower tokens or cost.
 - Parse JSONL line by line with per-line error isolation.
 - Normalize model bracket suffixes before pricing lookup.

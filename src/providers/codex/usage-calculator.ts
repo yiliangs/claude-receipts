@@ -53,7 +53,11 @@ export class UsageCalculator {
     const totalsByModel = new Map<string, ModelTotals>();
     const turns = new Map<string, TurnAccumulator>();
     const seenCumulativeUsage = new Set<string>();
-    let currentModel = "unknown";
+    // A rollout can emit token_count before its first turn_context. Those tokens
+    // are real spend by the model the rollout goes on to declare, so seed the
+    // model from that declaration instead of a sentinel: a sentinel has no
+    // pricing entry and silently bills the leading turns at $0.
+    let currentModel = firstDeclaredModel(content) ?? "unknown";
     let currentTurn: TurnAccumulator | undefined;
     let sessionId = fallbackSessionId;
 
@@ -317,4 +321,23 @@ export class UsageCalculator {
       usage.total_tokens ?? 0,
     ].join(":");
   }
+}
+
+/**
+ * The model of the first turn_context that declares one. Used to attribute
+ * token_count events that precede any turn_context — see calculate().
+ */
+function firstDeclaredModel(content: string): string | null {
+  for (const line of content.split("\n")) {
+    if (!line.includes("turn_context")) continue;
+    try {
+      const record: CodexRolloutRecord = JSON.parse(line);
+      if (record.type === "turn_context" && record.payload?.model) {
+        return normalizeModelId(record.payload.model);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
