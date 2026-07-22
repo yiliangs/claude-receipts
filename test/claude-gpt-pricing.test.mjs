@@ -25,13 +25,13 @@ test("Claude transcripts dedupe GPT responses and apply OpenAI request pricing",
   const path = join(dir, `${sessionId}.jsonl`);
   const standardUsage = {
     input_tokens: 1_000,
-    cache_creation_input_tokens: 0,
+    cache_creation_input_tokens: 2_000,
     cache_read_input_tokens: 400,
     output_tokens: 100,
   };
   const longContextUsage = {
     input_tokens: 100_000,
-    cache_creation_input_tokens: 0,
+    cache_creation_input_tokens: 20_000,
     cache_read_input_tokens: 200_000,
     output_tokens: 1_000,
   };
@@ -54,11 +54,11 @@ test("Claude transcripts dedupe GPT responses and apply OpenAI request pricing",
 
     assert.equal(usage.provider, "claude");
     assert.equal(usage.inputTokens, 101_000);
-    assert.equal(usage.cacheCreationTokens, 0);
+    assert.equal(usage.cacheCreationTokens, 22_000);
     assert.equal(usage.cacheReadTokens, 200_400);
     assert.equal(usage.outputTokens, 1_100);
-    assert.equal(usage.totalTokens, 302_500);
-    assert.equal(Number(usage.totalCost.toFixed(6)), 1.2532);
+    assert.equal(usage.totalTokens, 324_500);
+    assert.equal(Number(usage.totalCost.toFixed(6)), 1.5157);
     assert.deepEqual(usage.modelsUsed, ["gpt-5.6-sol"]);
     assert.equal(usage.modelBreakdowns[0].displayName, "GPT-5.6 Sol");
     assert.deepEqual(calculator.getUnknownModels(), []);

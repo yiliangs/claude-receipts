@@ -83,7 +83,7 @@ export function normalizeModelId(model: string): string {
 
 /**
  * Look up pricing for any model that can appear in a Claude Code transcript.
- * GPT cache creations are ordinary uncached input; cache reads use OpenAI's
+ * GPT cache creations use OpenAI's cache-write rate; cache reads use the
  * discounted cached-input rate.
  */
 export function priceFor(model: string): ModelPricing | null {
@@ -97,11 +97,11 @@ export function priceFor(model: string): ModelPricing | null {
   return {
     input: openAi.input,
     output: openAi.output,
-    cacheWrite: openAi.input,
+    cacheWrite: openAi.cacheWrite ?? openAi.input,
     cacheRead: openAi.cachedInput,
     longInput: openAi.longInput,
     longOutput: openAi.longOutput,
-    longCacheWrite: openAi.longInput,
+    longCacheWrite: openAi.longCacheWrite ?? openAi.longInput,
     longCacheRead: openAi.longCachedInput,
   };
 }
