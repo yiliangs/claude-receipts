@@ -19,6 +19,11 @@ export function providerByName(name: ProviderName): SessionProvider {
   throw new Error(`Unsupported provider: ${String(name)}`);
 }
 
+/** Every installed provider implementation, used by provider-neutral workflows. */
+export function allProviders(): SessionProvider[] {
+  return [new ClaudeProvider(), new CodexProvider()];
+}
+
 /** Detect a transcript by wire format, with path only as a final fallback. */
 export async function detectProvider(
   transcriptPath: string,
@@ -62,10 +67,7 @@ export async function detectProvider(
 export async function findSession(
   query?: string,
 ): Promise<ResolvedSession> {
-  const providers: SessionProvider[] = [
-    new ClaudeProvider(),
-    new CodexProvider(),
-  ];
+  const providers = allProviders();
   const results = await Promise.all(
     providers.map(async (provider) => {
       try {

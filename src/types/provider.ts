@@ -35,6 +35,12 @@ export interface SessionProvider {
    */
   findSession(query?: string): Promise<FoundSession>;
 
+  /** List every top-level transcript candidate available for reconciliation. */
+  findAllSessions(): Promise<FoundSession[]>;
+
+  /** Cheap provider-specific fingerprint of every billing input for a session. */
+  fingerprintSession(session: FoundSession): Promise<string>;
+
   /**
    * Sum the session's billing events from its transcript and price them.
    * Must set `provider` and per-model `displayName` on the result.

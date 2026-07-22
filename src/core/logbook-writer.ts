@@ -210,7 +210,10 @@ export class LogbookWriter {
       // into preserved totals would publish a shard that disagrees with itself.
       model_breakdowns: existing.model_breakdowns,
       turns: existing.turns,
-      source_fingerprint: existing.source_fingerprint,
+      // The source was successfully examined even when its recomputation was
+      // lower. Advancing the fingerprint prevents an unchanged truncated or
+      // pruned transcript from being retried on every reconciliation.
+      source_fingerprint: next.source_fingerprint,
     };
   }
 

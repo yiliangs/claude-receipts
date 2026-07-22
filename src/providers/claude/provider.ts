@@ -1,6 +1,7 @@
 import { UsageCalculator } from "./usage-calculator.js";
 import { TranscriptParser } from "./transcript-parser.js";
 import { SessionFinder } from "./session-finder.js";
+import { fingerprintSessionTranscript } from "./transcript-fingerprint.js";
 import type {
   SessionProvider,
   FoundSession,
@@ -22,6 +23,17 @@ export class ClaudeProvider implements SessionProvider {
 
   findSession(query?: string): Promise<FoundSession> {
     return this.finder.find(query);
+  }
+
+  findAllSessions(): Promise<FoundSession[]> {
+    return this.finder.findAll();
+  }
+
+  fingerprintSession(session: FoundSession): Promise<string> {
+    return fingerprintSessionTranscript(
+      session.transcriptPath,
+      session.sessionId,
+    );
   }
 
   calculateUsage(

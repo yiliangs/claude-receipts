@@ -21,6 +21,7 @@
 import {
   LONG_CONTEXT_THRESHOLD,
   priceFor as openAiPriceFor,
+  pricingFingerprintSource as openAiPricingFingerprintSource,
 } from "../codex/pricing.js";
 
 export interface ModelPricing {
@@ -63,6 +64,15 @@ const PRICING: Record<string, ModelPricing> = {
   "claude-3-opus":      { input: 15,   output: 75,   cacheWrite: 18.75, cacheRead: 1.50 },
   "claude-3-haiku":     { input: 0.25, output: 1.25, cacheWrite: 0.30,  cacheRead: 0.03 },
 };
+
+/** Stable input for transcript fingerprints; changes automatically with rates. */
+export function pricingFingerprintSource(): string {
+  return JSON.stringify({
+    longContextThreshold: LONG_CONTEXT_THRESHOLD,
+    anthropic: PRICING,
+    openAi: openAiPricingFingerprintSource(),
+  });
+}
 
 /**
  * Anthropic model IDs come in three flavors:

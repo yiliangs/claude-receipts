@@ -4,71 +4,83 @@ import { join } from "path";
 import ora from "ora";
 import { ConfigManager } from "../core/config-manager.js";
 import { LogbookWriter, type LogbookRecord } from "../core/logbook-writer.js";
-import { CodexProvider } from "../providers/codex/provider.js";
-import { SessionFinder } from "../providers/codex/session-finder.js";
-import { fingerprintTranscriptFile } from "../providers/codex/transcript-fingerprint.js";
+import { allProviders } from "../providers/registry.js";
 import { resolveUsageRoot } from "../utils/usage-root.js";
+import type { ProviderName } from "../types/provider.js";
 
 export interface SyncOptions {
   quiet?: boolean;
 }
 
-/** Reconcile local Codex rollouts into idempotent per-session shards. */
+/** Reconcile every provider transcript into idempotent per-session shards. */
 export class SyncCommand {
   private configManager = new ConfigManager();
-  private finder = new SessionFinder();
-  private provider = new CodexProvider();
   private writer = new LogbookWriter();
 
   async execute(options: SyncOptions = {}): Promise<number> {
     const spinner = ora({
-      text: "Reconciling Codex turns...",
+      text: "Reconciling agent sessions...",
       isSilent: !!options.quiet,
     }).start();
     const config = await this.configManager.loadConfig();
     const { root } = resolveUsageRoot(config);
-    const sessions = await this.finder.findAll();
     let updated = 0;
     const failures: string[] = [];
 
-    for (const found of sessions) {
-      try {
-        const shardPath = join(
-          root,
-          LogbookWriter.SHARD_DIR,
-          `${found.sessionId}.json`,
-        );
-        const sourceFingerprint = await fingerprintTranscriptFile(
-          found.transcriptPath,
-        );
-        if (!(await this.needsSync(sourceFingerprint, shardPath))) continue;
+    for (const provider of allProviders()) {
+      const sessions = await provider.findAllSessions();
+      for (const found of sessions) {
+        try {
+          const shardPath = join(
+            root,
+            LogbookWriter.SHARD_DIR,
+            `${found.sessionId}.json`,
+          );
+          const sourceFingerprint = await provider.fingerprintSession(found);
+          if (
+            !(await this.needsSync(
+              sourceFingerprint,
+              shardPath,
+              provider.name,
+            ))
+          ) {
+            continue;
+          }
 
-        const sessionData = await this.provider.calculateUsage(
-          found.transcriptPath,
-          found.sessionId,
-        );
-        if (sessionData.totalTokens <= 0) continue;
-        const transcriptData = await this.provider.parseTranscript(
-          found.transcriptPath,
-          sessionData.sessionId,
-        );
-        await this.writer.append(root, { sessionData, transcriptData });
-        updated++;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        failures.push(`${found.sessionId}: ${message}`);
+          const sessionData = await provider.calculateUsage(
+            found.transcriptPath,
+            found.sessionId,
+          );
+          if (sessionData.sessionId !== found.sessionId) {
+            throw new Error(
+              `provider returned session ${sessionData.sessionId} for ${found.sessionId}`,
+            );
+          }
+          if (sessionData.totalTokens <= 0) continue;
+          sessionData.sourceFingerprint ??= sourceFingerprint;
+          const transcriptData = await provider.parseTranscript(
+            found.transcriptPath,
+            sessionData.sessionId,
+          );
+          await this.writer.append(root, { sessionData, transcriptData });
+          updated++;
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          failures.push(`${provider.name}:${found.sessionId}: ${message}`);
+        }
       }
     }
 
     if (failures.length > 0) {
-      spinner.fail("Failed to reconcile all Codex records.");
+      spinner.fail("Failed to reconcile all agent records.");
       throw new Error(failures.join("\n"));
     }
 
     spinner.succeed(
       updated > 0
-        ? `Reconciled ${updated} Codex session${updated === 1 ? "" : "s"}.`
-        : "Codex records are current.",
+        ? `Reconciled ${updated} agent session${updated === 1 ? "" : "s"}.`
+        : "Agent records are current.",
     );
     return updated;
   }
@@ -76,13 +88,14 @@ export class SyncCommand {
   private async needsSync(
     sourceFingerprint: string,
     shardPath: string,
+    provider: ProviderName,
   ): Promise<boolean> {
     if (!existsSync(shardPath)) return true;
     try {
       const content = await readFile(shardPath, "utf-8");
       const record = JSON.parse(content) as LogbookRecord;
       return (
-        !record.turns?.length ||
+        (record.provider || "claude") !== provider ||
         record.source_fingerprint !== sourceFingerprint
       );
     } catch {

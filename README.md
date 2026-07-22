@@ -43,7 +43,7 @@ in place of `claude`.
 After initialization, use the dedicated one-click portal launcher whenever you
 want a fresh portal: `portal/Agent-Usage-Stat.bat` on Windows or
 `portal/Agent-Usage-Stat.command` on macOS. It stops the previous local server,
-reconciles local Codex turns into the configured `logbook.d/`, rebuilds the
+reconciles local Claude and Codex sessions into the configured `logbook.d/`, rebuilds the
 browser data, and opens the portal.
 
 ## What you get

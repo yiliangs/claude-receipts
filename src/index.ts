@@ -5,6 +5,7 @@ export {
   detectProvider,
   findSession,
   providerByName,
+  allProviders,
 } from "./providers/registry.js";
 export {
   UsageCalculator,

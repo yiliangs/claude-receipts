@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  appendFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -285,6 +286,86 @@ test("sync repairs a stale newer shard by rollout content, then stays idempotent
     assert.equal(second.code, 0, second.output);
     const afterSecondSync = await stat(shard);
     assert.equal(afterSecondSync.mtimeMs, beforeSecondSync.mtimeMs);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("sync backfills Claude sessions and fingerprints recursive subagent usage", async () => {
+  const home = await mkdtemp(join(tmpdir(), "agent-usage-stat-claude-sync-"));
+  const sessionId = "66666666-6666-6666-6666-666666666666";
+  const projectDir = join(home, ".claude", "projects", "test-project");
+  const transcript = join(projectDir, `${sessionId}.jsonl`);
+  const subagentDir = join(
+    projectDir,
+    sessionId,
+    "subagents",
+    "workflows",
+    "wf_test",
+  );
+  const subagent = join(subagentDir, "agent-test.jsonl");
+  const dataRoot = join(home, "usage");
+  const shard = join(dataRoot, "logbook.d", `${sessionId}.json`);
+  const assistant = (id, inputTokens) =>
+    JSON.stringify({
+      type: "assistant",
+      timestamp: "2026-07-18T00:00:01.000Z",
+      cwd: join(home, "project"),
+      message: {
+        id,
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        content: [{ type: "text", text: "done" }],
+        usage: { input_tokens: inputTokens, output_tokens: 100 },
+      },
+    });
+
+  await mkdir(subagentDir, { recursive: true });
+  await writeFile(
+    join(home, ".agent-usage-stat.config.json"),
+    JSON.stringify({ dataRoot }),
+  );
+  await writeFile(transcript, assistant("main-response", 1000));
+  await writeFile(subagent, assistant("subagent-response-1", 2000));
+
+  try {
+    const first = await runCli(["sync", "--quiet"], home);
+    assert.equal(first.code, 0, first.output);
+    const initial = JSON.parse(await readFile(shard, "utf8"));
+    assert.equal(initial.provider, "claude");
+    assert.equal(initial.total_tokens, 3200);
+    assert.match(initial.source_fingerprint, /^claude-usage-/);
+
+    await writeFile(
+      shard,
+      JSON.stringify({
+        ...initial,
+        total_cost_usd: 0,
+        source_fingerprint: "claude-usage-v1:legacy-pricing",
+      }),
+    );
+    const second = await runCli(["sync", "--quiet"], home);
+    assert.equal(second.code, 0, second.output);
+    const repriced = JSON.parse(await readFile(shard, "utf8"));
+    assert.equal(repriced.total_cost_usd, 0.012);
+    assert.match(repriced.source_fingerprint, /^claude-usage-v2:/);
+
+    const beforeThirdSync = await stat(shard);
+    const third = await runCli(["sync", "--quiet"], home);
+    assert.equal(third.code, 0, third.output);
+    const afterThirdSync = await stat(shard);
+    assert.equal(afterThirdSync.mtimeMs, beforeThirdSync.mtimeMs);
+
+    await appendFile(
+      subagent,
+      `\n${assistant("subagent-response-2", 3000)}`,
+      "utf8",
+    );
+    const fourth = await runCli(["sync", "--quiet"], home);
+    assert.equal(fourth.code, 0, fourth.output);
+    const updated = JSON.parse(await readFile(shard, "utf8"));
+    assert.equal(updated.total_tokens, 6300);
+    assert.notEqual(updated.source_fingerprint, repriced.source_fingerprint);
   } finally {
     await rm(home, { recursive: true, force: true });
   }

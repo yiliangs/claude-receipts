@@ -1,8 +1,12 @@
-import { readFile, readdir } from "fs/promises";
+import { readFile } from "fs/promises";
 import { existsSync } from "fs";
-import { join, dirname, basename } from "path";
 import { priceForRequest, normalizeModelId } from "./pricing.js";
 import { displayModelName } from "./model-names.js";
+import { findSessionTranscriptFiles } from "./session-files.js";
+import {
+  fingerprintTranscriptContentPart,
+  fingerprintTranscriptParts,
+} from "./transcript-fingerprint.js";
 import { expandHome } from "../../utils/paths.js";
 import type { TranscriptMessage } from "./transcript-format.js";
 import type { SessionUsage, ModelBreakdown } from "../../types/session.js";
@@ -57,9 +61,15 @@ export class UsageCalculator {
     // The set is shared across the main transcript and all subagent files —
     // a billing event must count exactly once no matter where it appears.
     const seenBillingKeys = new Set<string>();
+    const fingerprintParts: string[] = [];
 
-    for (const file of await this.transcriptFiles(expanded, sessionId)) {
-      await this.accumulateFile(file, totalsByModel, seenBillingKeys);
+    for (const file of await findSessionTranscriptFiles(expanded, sessionId)) {
+      const part = await this.accumulateFile(
+        file,
+        totalsByModel,
+        seenBillingKeys,
+      );
+      if (part) fingerprintParts.push(part);
     }
 
     const breakdowns: ModelBreakdown[] = [];
@@ -104,69 +114,13 @@ export class UsageCalculator {
       totalCost,
       modelsUsed: breakdowns.map((b) => b.modelName),
       modelBreakdowns: breakdowns,
+      sourceFingerprint: fingerprintTranscriptParts(fingerprintParts),
     };
   }
 
   /** Models priced at $0 because we have no entry. capture.ts logs these. */
   getUnknownModels(): string[] {
     return [...this.unknownModels];
-  }
-
-  /**
-   * The main transcript plus any subagent transcripts. Claude Code writes
-   * Task/Agent and workflow subagent usage to files under
-   * `<projectDir>/<session-id>/subagents/` — their billing events never appear
-   * in the main JSONL, so skipping them undercounts every session that
-   * delegated work.
-   *
-   * The layout is NOT flat. Plain Task/Agent runs land directly in
-   * `subagents/agent-*.jsonl`, but Workflow-spawned agents are nested another
-   * two levels deep under `subagents/workflows/wf_<id>/agent-*.jsonl`. A
-   * non-recursive scan sees only the flat case and silently drops every
-   * workflow agent — on a heavy ultracode/workflow session that's ~half the
-   * real spend (observed: a $223 session billed at $114). So we walk the
-   * subagents tree recursively and take every *.jsonl at any depth.
-   *
-   * The subagent directory is usually under the same project dir as the main
-   * transcript, but a run using isolation:'worktree' stores the parent
-   * transcript under the repo's project dir while its subagents land under the
-   * *worktree's* project dir — a sibling directory keyed to the worktree path.
-   * So we look both next to the transcript and across every project dir,
-   * matching on the session id. Missing directories just mean no subagents ran.
-   */
-  private async transcriptFiles(
-    mainPath: string,
-    sessionId: string,
-  ): Promise<string[]> {
-    const files = [mainPath];
-    const sid = sessionId || basename(mainPath).replace(/\.jsonl$/, "");
-
-    const projectDir = dirname(mainPath);
-    const candidateDirs = new Set<string>([projectDir]);
-    try {
-      // ~/.claude/projects — sibling project dirs (covers the worktree split).
-      const projectsRoot = dirname(projectDir);
-      for (const entry of await readdir(projectsRoot)) {
-        candidateDirs.add(join(projectsRoot, entry));
-      }
-    } catch {
-      // mainPath isn't under the standard projects root — co-located only.
-    }
-
-    for (const dir of candidateDirs) {
-      const subagentDir = join(dir, sid, "subagents");
-      try {
-        // Recursive: workflow agents nest under subagents/workflows/wf_*/.
-        // readdir returns paths relative to subagentDir; directory entries
-        // (e.g. "workflows") don't end in .jsonl, so they're skipped.
-        for (const entry of await readdir(subagentDir, { recursive: true })) {
-          if (entry.endsWith(".jsonl")) files.push(join(subagentDir, entry));
-        }
-      } catch {
-        // no subagents directory here
-      }
-    }
-    return files;
   }
 
   /**
@@ -177,13 +131,13 @@ export class UsageCalculator {
     path: string,
     totalsByModel: Map<string, ModelTotals>,
     seenBillingKeys: Set<string>,
-  ): Promise<void> {
+  ): Promise<string | null> {
     let content: string;
     try {
       content = await readFile(path, "utf-8");
     } catch {
       // Subagent file vanished or unreadable, so skip it rather than fail capture.
-      return;
+      return null;
     }
 
     for (const line of content.split("\n")) {
@@ -249,5 +203,6 @@ export class UsageCalculator {
       }
       totalsByModel.set(model, totals);
     }
+    return fingerprintTranscriptContentPart(content);
   }
 }

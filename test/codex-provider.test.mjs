@@ -421,6 +421,7 @@ test("logbook never regresses when detached workers finish out of order", async 
       cacheReadTokens: 0,
       totalTokens: tokens,
       totalCost: cost,
+      sourceFingerprint: `snapshot-${tokens}`,
       modelsUsed: ["gpt-5.6-sol"],
       modelBreakdowns: [],
     },
@@ -441,8 +442,17 @@ test("logbook never regresses when detached workers finish out of order", async 
       root,
       makeData(1000, 1.5, "2026-07-13T00:10:00.000Z"),
     );
+    await writer.append(
+      root,
+      makeData(900, 0.9, "2026-07-13T00:09:00.000Z"),
+    );
+    const preserved = JSON.parse(await readFile(shard, "utf8"));
+    assert.equal(preserved.total_tokens, 1000);
+    assert.equal(preserved.total_cost_usd, 1.5);
+    assert.equal(preserved.source_fingerprint, "snapshot-900");
+
     await Promise.all(
-      [900, 800, 700, 600, 500].map((tokens) =>
+      [800, 700, 600, 500].map((tokens) =>
         writer.append(
           root,
           makeData(
@@ -456,6 +466,7 @@ test("logbook never regresses when detached workers finish out of order", async 
     const record = JSON.parse(await readFile(shard, "utf8"));
     assert.equal(record.total_tokens, 1000);
     assert.equal(record.total_cost_usd, 1.5);
+    assert.notEqual(record.source_fingerprint, "snapshot-1000");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

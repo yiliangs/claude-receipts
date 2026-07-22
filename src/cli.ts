@@ -47,7 +47,7 @@ program
   .description("Open the local usage portal")
   .option("--port <number>", "Local server port", "4179")
   .option("--no-open", "Start without opening a browser")
-  .option("--no-sync", "Skip Codex rollout reconciliation")
+  .option("--no-sync", "Skip agent session reconciliation")
   .action(async (options) => {
     if (options.sync !== false) {
       const { SyncCommand } = await import("./commands/sync.js");
@@ -59,7 +59,7 @@ program
 
 program
   .command("sync")
-  .description("Reconcile local Codex turns into the usage logbook")
+  .description("Reconcile local Claude and Codex sessions into the usage logbook")
   .option("--quiet", "Suppress progress output")
   .action(async (options) => {
     const { SyncCommand } = await import("./commands/sync.js");
