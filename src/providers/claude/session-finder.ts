@@ -3,8 +3,10 @@ import { join } from "path";
 import { homeDir } from "../../utils/paths.js";
 import type { FoundSession } from "../../types/provider.js";
 
+const SESSION_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i;
+
 /**
- * Locate a session's transcript file by walking ~/.claude/projects/*\/*.jsonl.
+ * Locate a session transcript under the active Claude Code config directory.
  *
  * Replaces the manual-mode discovery step that previously shelled out to
  * `ccusage session --json --breakdown`. We don't need ccusage's index —
@@ -14,8 +16,10 @@ import type { FoundSession } from "../../types/provider.js";
 export class SessionFinder {
   private root: string;
 
-  constructor() {
-    this.root = join(homeDir(), ".claude", "projects");
+  constructor(
+    claudeHome = process.env.CLAUDE_CONFIG_DIR || join(homeDir(), ".claude"),
+  ) {
+    this.root = join(claudeHome, "projects");
   }
 
   /**
@@ -24,7 +28,7 @@ export class SessionFinder {
    * across all projects.
    */
   async find(query?: string): Promise<FoundSession> {
-    const all = await this.scanAll();
+    const all = await this.findAll();
     if (all.length === 0) {
       throw new Error(
         `No transcripts found under ${this.root}. Has Claude Code ever run on this machine?`,
@@ -55,7 +59,9 @@ export class SessionFinder {
     return matches[0];
   }
 
-  private async scanAll(): Promise<FoundSession[]> {
+  /** List one newest top-level transcript per Claude session UUID. */
+  async findAll(): Promise<FoundSession[]> {
+    const byId = new Map<string, FoundSession>();
     const out: FoundSession[] = [];
     let projectDirs: string[];
     try {
@@ -74,22 +80,27 @@ export class SessionFinder {
       }
 
       for (const file of files) {
-        if (!file.endsWith(".jsonl")) continue;
+        if (!SESSION_FILE.test(file)) continue;
         const sessionId = file.slice(0, -".jsonl".length);
         const transcriptPath = join(projectAbs, file);
         try {
           const s = await stat(transcriptPath);
-          out.push({
+          const found = {
             sessionId,
             transcriptPath,
             projectPath: `${projectDir}/${sessionId}`,
             mtimeMs: s.mtimeMs,
-          });
+          };
+          const existing = byId.get(sessionId);
+          if (!existing || found.mtimeMs > existing.mtimeMs) {
+            byId.set(sessionId, found);
+          }
         } catch {
           // skip unreadable file
         }
       }
     }
-    return out;
+    out.push(...byId.values());
+    return out.sort((a, b) => a.mtimeMs - b.mtimeMs);
   }
 }

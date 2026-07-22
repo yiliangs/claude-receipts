@@ -10,8 +10,9 @@
    TYPE rollups (input/output/cache) are exact — those columns are per session.
    ============================================================ */
 import { LH, familyOf } from './data'
+import type { Filters, RangeKey } from './types'
 
-function windowFor(range: string) {
+function windowFor(range: RangeKey) {
   const DAY = LH.DAY
   const END = LH.BUILD.getTime()
   const days = range === '7d' ? 7 : range === '14d' ? 14 : range === '30d' ? 30 : range === '90d' ? 90 : LH.SPAN + 1
@@ -25,16 +26,18 @@ function windowFor(range: string) {
 }
 
 // apply all filters → array of sessions
-function applyFilters(f: any) {
+function applyFilters(f: Filters) {
   const win = windowFor(f.range)
   const q = (f.search || '').trim().toLowerCase()
   const useR = f.providers?.size || 0, useP = f.projects.size, useM = f.machines.size, useF = f.models.size
+  const useV = f.vendors?.size || 0
   const out: any[] = []
   const S = LH.SESSIONS
   for (let i = 0; i < S.length; i++) {
     const s = S[i]
     if (s.t < win.start || s.t > win.end) continue
     if (useR && !f.providers.has(s.provider)) continue
+    if (useV && !Object.keys(s.byVendor || {}).some((v) => f.vendors.has(v))) continue
     if (useP && !f.projects.has(s.project)) continue
     if (useM && !f.machines.has(s.machine)) continue
     if (useF && !s.models.some((m: string) => f.models.has(familyOf(m)))) continue
@@ -86,6 +89,12 @@ function bucketIndex(bks: any[], ms: number) {
   return bks.length && ms >= bks[bks.length - 1].start ? bks.length - 1 : -1
 }
 
+// New shards can retain exact turn slices. Older shards fall back to their
+// session aggregate so every provider still flows through the same functions.
+function temporalSlices(session: any): any[] {
+  return session.turns?.length ? session.turns : [session]
+}
+
 // ---- headline totals ----
 function totals(sessions: any[]) {
   const t: any = {
@@ -117,9 +126,11 @@ function costOverTime(sessions: any[], bks: any[]) {
   const byKey: any = {}
   series.forEach((s) => (byKey[s.key] = s))
   for (const s of sessions) {
-    const bi = bucketIndex(bks, s.t)
-    if (bi < 0) continue
-    byKey[s.fam].values[bi] += s.cost
+    for (const slice of temporalSlices(s)) {
+      const bi = bucketIndex(bks, slice.t)
+      if (bi < 0) continue
+      byKey[slice.fam].values[bi] += slice.cost
+    }
   }
   // drop all-zero families so the legend stays tight
   return series.filter((s) => s.values.some((v) => v > 0))
@@ -130,12 +141,14 @@ function tokensOverTime(sessions: any[], bks: any[]) {
   const TOK = LH.TOKENS
   const series = TOK.map((t) => ({ key: t.key, label: t.label, color: t.color, border: t.border, values: bks.map(() => 0) }))
   for (const s of sessions) {
-    const bi = bucketIndex(bks, s.t)
-    if (bi < 0) continue
-    series[0].values[bi] += s.input
-    series[1].values[bi] += s.output
-    series[2].values[bi] += s.cacheCreate
-    series[3].values[bi] += s.cacheRead
+    for (const slice of temporalSlices(s)) {
+      const bi = bucketIndex(bks, slice.t)
+      if (bi < 0) continue
+      series[0].values[bi] += slice.input
+      series[1].values[bi] += slice.output
+      series[2].values[bi] += slice.cacheCreate
+      series[3].values[bi] += slice.cacheRead
+    }
   }
   return series
 }
@@ -143,9 +156,11 @@ function tokensOverTime(sessions: any[], bks: any[]) {
 // ---- scalar series (sparklines + single-line charts) ----
 function scalarSeries(sessions: any[], bks: any[], pick: (s: any) => number) {
   const v = bks.map(() => 0)
-  for (const s of sessions) {
-    const bi = bucketIndex(bks, s.t)
-    if (bi >= 0) v[bi] += pick(s)
+  for (const session of sessions) {
+    for (const slice of temporalSlices(session)) {
+      const bi = bucketIndex(bks, slice.t)
+      if (bi >= 0) v[bi] += pick(slice)
+    }
   }
   return v
 }
@@ -159,9 +174,11 @@ function cumulative(arr: number[]) {
 // cache-hit ratio per bucket (cacheRead / total tokens)
 function cacheHitSeries(sessions: any[], bks: any[]) {
   const read = bks.map(() => 0), tot = bks.map(() => 0)
-  for (const s of sessions) {
-    const bi = bucketIndex(bks, s.t)
-    if (bi >= 0) { read[bi] += s.cacheRead; tot[bi] += s.totalTokens }
+  for (const session of sessions) {
+    for (const slice of temporalSlices(session)) {
+      const bi = bucketIndex(bks, slice.t)
+      if (bi >= 0) { read[bi] += slice.cacheRead; tot[bi] += slice.totalTokens }
+    }
   }
   return bks.map((_, i) => (tot[i] ? read[i] / tot[i] : null))
 }

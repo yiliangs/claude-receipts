@@ -5,6 +5,7 @@ export {
   detectProvider,
   findSession,
   providerByName,
+  allProviders,
 } from "./providers/registry.js";
 export {
   UsageCalculator,
@@ -23,7 +24,9 @@ export { SessionFinder as CodexSessionFinder } from "./providers/codex/session-f
 export { TranscriptParser as CodexTranscriptParser } from "./providers/codex/transcript-parser.js";
 export { ConfigManager } from "./core/config-manager.js";
 export { CaptureCommand } from "./commands/capture.js";
+export { RunCommand, formatRunMessage } from "./commands/run.js";
 export { PortalCommand } from "./commands/portal.js";
+export { SyncCommand } from "./commands/sync.js";
 export {
   resolveUsageRoot,
   resolveUsageRootFromDisk,
@@ -34,6 +37,7 @@ export {
 export type {
   SessionUsage,
   ModelBreakdown,
+  TurnUsage,
   ProviderName,
 } from "./types/session.js";
 export type { SessionProvider, FoundSession } from "./types/provider.js";

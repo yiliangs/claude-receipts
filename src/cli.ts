@@ -1,24 +1,21 @@
 #!/usr/bin/env node
 
-import { Command, Option } from "commander";
+import { Command } from "commander";
 
 // Commands are loaded lazily. The hook path must reach the detach shim without
 // loading provider parsers, the portal server, or any other worker code.
 const program = new Command();
+program.enablePositionalOptions();
 
 program
   .name("agent-usage-stat")
   .description("Explore Claude Code and Codex usage in a local portal")
-  .version("2.0.0");
+  .version("2.0.1");
 
 program
   .command("capture")
   .description("Record one Claude Code or Codex session")
   .option("-s, --session <id>", "Specific session ID to record")
-  .addOption(
-    new Option("-p, --provider <provider>", "Session provider")
-      .choices(["claude", "codex"]),
-  )
   .option("--detach", "Spawn a detached capture worker and exit")
   .option("--input-file <path>", "Read hook JSON from a file")
   .option("--quiet", "Suppress console output")
@@ -33,13 +30,40 @@ program
   });
 
 program
+  .command("run")
+  .description("Launch an agent and report verified usage in this terminal")
+  .argument("<agent>", "Agent command: claude, codex, or claudex")
+  .argument("[agent-args...]", "Arguments forwarded to the agent")
+  .allowUnknownOption()
+  .passThroughOptions()
+  .action(async (agent, agentArgs) => {
+    const { RunCommand } = await import("./commands/run.js");
+    const forwardedArgs = agentArgs[0] === "--" ? agentArgs.slice(1) : agentArgs;
+    process.exitCode = await new RunCommand().execute(agent, forwardedArgs);
+  });
+
+program
   .command("portal")
   .description("Open the local usage portal")
   .option("--port <number>", "Local server port", "4179")
   .option("--no-open", "Start without opening a browser")
+  .option("--no-sync", "Skip agent session reconciliation")
   .action(async (options) => {
+    if (options.sync !== false) {
+      const { SyncCommand } = await import("./commands/sync.js");
+      await new SyncCommand().execute({ quiet: true });
+    }
     const { PortalCommand } = await import("./commands/portal.js");
     await new PortalCommand().execute(options);
+  });
+
+program
+  .command("sync")
+  .description("Reconcile local Claude and Codex sessions into the usage logbook")
+  .option("--quiet", "Suppress progress output")
+  .action(async (options) => {
+    const { SyncCommand } = await import("./commands/sync.js");
+    await new SyncCommand().execute(options);
   });
 
 program
@@ -55,13 +79,10 @@ program
 
 program
   .command("setup")
-  .description("Connect Claude Code and/or Codex")
-  .addOption(
-    new Option("-p, --provider <provider>", "Hooks to configure")
-      .choices(["claude", "codex", "all"])
-      .default("all"),
-  )
-  .option("--uninstall", "Remove the selected integration(s)")
+  .description("Choose a usage folder and connect installed agents")
+  .option("--data-root <path>", "Use this usage-data folder without prompting")
+  .option("--no-terminal-message", "Do not wrap agent commands for terminal status")
+  .option("--uninstall", "Remove Agent Usage Stat hooks")
   .action(async (options) => {
     const { SetupCommand } = await import("./commands/setup.js");
     await new SetupCommand().execute(options);
@@ -69,4 +90,4 @@ program
 
 if (process.argv.length === 2) process.argv.push("portal");
 
-program.parse();
+await program.parseAsync();

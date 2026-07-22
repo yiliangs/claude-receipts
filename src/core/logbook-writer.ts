@@ -4,6 +4,7 @@ import { join } from "path";
 import { hostname } from "os";
 import type { SessionUsage } from "../types/session.js";
 import type { ParsedTranscript } from "../types/transcript.js";
+import { vendorForModel, type ModelVendor } from "./model-vendor.js";
 
 export interface UsageRecordData {
   sessionData: SessionUsage;
@@ -35,9 +36,46 @@ export interface LogbookRecord {
   total_tokens: number;
   total_cost_usd: number;
   models: string[];
+  /**
+   * Per-model tokens, cost, and vendor. The calculators have always computed
+   * this; the shard used to keep only the model NAMES and throw the rest away,
+   * which made it impossible to split a session's spend by model vendor after
+   * the fact. Shards written before 2026-07-20 omit it — consumers fall back to
+   * deriving vendor from `models`, which is exact only while no session mixes
+   * vendors. Keep writing this so that stops being a precondition.
+   */
+  model_breakdowns?: LogbookModelRecord[];
+  /** Turn-scoped slices for accurate time attribution. Older shards omit it. */
+  turns?: LogbookTurnRecord[];
+  /** Fingerprint of the provider transcript used to build this snapshot. */
+  source_fingerprint?: string;
   /** Which tool produced the session. Shards written before 2026-07-09 lack
    *  the field — consumers default it to "claude". */
   provider: string;
+}
+
+export interface LogbookModelRecord {
+  model: string;
+  vendor: ModelVendor;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  total_tokens: number;
+  total_cost_usd: number;
+}
+
+export interface LogbookTurnRecord {
+  turn_id: string;
+  start_time: string;
+  end_time: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  models: string[];
 }
 
 /**
@@ -168,6 +206,14 @@ export class LogbookWriter {
       total_tokens: existing.total_tokens,
       total_cost_usd: existing.total_cost_usd,
       models: existing.models,
+      // Keep the breakdown with the totals it sums to. Mixing a fresh breakdown
+      // into preserved totals would publish a shard that disagrees with itself.
+      model_breakdowns: existing.model_breakdowns,
+      turns: existing.turns,
+      // The source was successfully examined even when its recomputation was
+      // lower. Advancing the fingerprint prevents an unchanged truncated or
+      // pruned transcript from being retried on every reconciliation.
+      source_fingerprint: next.source_fingerprint,
     };
   }
 
@@ -197,6 +243,33 @@ export class LogbookWriter {
       total_tokens: sessionData.totalTokens ?? 0,
       total_cost_usd: Number((sessionData.totalCost ?? 0).toFixed(6)),
       models,
+      model_breakdowns: (sessionData.modelBreakdowns || []).map((breakdown) => ({
+        model: breakdown.modelName,
+        vendor: vendorForModel(breakdown.modelName),
+        input_tokens: breakdown.inputTokens,
+        output_tokens: breakdown.outputTokens,
+        cache_creation_tokens: breakdown.cacheCreationTokens ?? 0,
+        cache_read_tokens: breakdown.cacheReadTokens ?? 0,
+        total_tokens:
+          breakdown.inputTokens +
+          breakdown.outputTokens +
+          (breakdown.cacheCreationTokens ?? 0) +
+          (breakdown.cacheReadTokens ?? 0),
+        total_cost_usd: Number(breakdown.cost.toFixed(6)),
+      })),
+      turns: sessionData.turns?.map((turn) => ({
+        turn_id: turn.id,
+        start_time: turn.startTime,
+        end_time: turn.endTime,
+        input_tokens: turn.inputTokens,
+        output_tokens: turn.outputTokens,
+        cache_creation_tokens: turn.cacheCreationTokens,
+        cache_read_tokens: turn.cacheReadTokens,
+        total_tokens: turn.totalTokens,
+        total_cost_usd: Number(turn.totalCost.toFixed(6)),
+        models: turn.modelsUsed,
+      })),
+      source_fingerprint: sessionData.sourceFingerprint,
       provider: sessionData.provider,
     };
   }

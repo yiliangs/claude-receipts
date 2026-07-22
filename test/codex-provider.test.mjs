@@ -1,15 +1,106 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { CodexProvider, detectProvider } from "../dist/index.js";
 import { LogbookWriter } from "../dist/core/logbook-writer.js";
+import {
+  createAgentRun,
+  removeAgentRun,
+  waitForAgentRun,
+} from "../dist/utils/capture-run.js";
 
 function line(type, payload, timestamp) {
   return JSON.stringify({ type, payload, timestamp });
 }
+
+test("Codex snapshot cache processes appended complete lines and defers partial tails", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-usage-stat-incremental-"));
+  const cache = join(dir, "cache");
+  const sessionId = "99999999-9999-9999-9999-999999999999";
+  const path = join(dir, `rollout-${sessionId}.jsonl`);
+  const firstUsage = {
+    input_tokens: 1000,
+    cached_input_tokens: 400,
+    output_tokens: 100,
+    total_tokens: 1100,
+  };
+  const secondUsage = {
+    input_tokens: 3000,
+    cached_input_tokens: 800,
+    output_tokens: 300,
+    total_tokens: 3300,
+  };
+  const priorCacheRoot = process.env.AGENT_USAGE_STAT_CACHE_ROOT;
+  process.env.AGENT_USAGE_STAT_CACHE_ROOT = cache;
+
+  await writeFile(
+    path,
+    [
+      line("session_meta", { id: sessionId, cwd: "C:\\work\\demo" }),
+      line("turn_context", { turn_id: "one", model: "gpt-5.6-sol" }),
+      line("event_msg", { type: "user_message", message: "First prompt" }),
+      line("event_msg", {
+        type: "token_count",
+        info: { total_token_usage: firstUsage, last_token_usage: firstUsage },
+      }),
+    ].join("\n") + "\n",
+  );
+
+  try {
+    const provider = new CodexProvider();
+    const first = await provider.calculateUsage(path, sessionId);
+    assert.equal(first.totalTokens, 1100);
+    assert.equal((await readdir(cache)).filter((x) => x.endsWith(".json")).length, 1);
+
+    const completeSecondTurn = [
+      line("turn_context", { turn_id: "two", model: "gpt-5.6-sol" }),
+      line("event_msg", { type: "agent_message", message: "Second response" }),
+      line("event_msg", {
+        type: "token_count",
+        info: { total_token_usage: secondUsage, last_token_usage: {
+          input_tokens: 2000,
+          cached_input_tokens: 400,
+          output_tokens: 200,
+          total_tokens: 2200,
+        } },
+      }),
+    ].join("\n") + "\n";
+    await appendFile(path, completeSecondTurn + '{"type":"event_msg"');
+
+    const second = await provider.calculateUsage(path, sessionId);
+    const transcript = await provider.parseTranscript(path, sessionId);
+    assert.equal(second.totalTokens, 3300);
+    assert.equal(second.turns.length, 2);
+    assert.equal(transcript.assistantMessageCount, 1);
+    const [cacheFile] = (await readdir(cache)).filter((x) => x.endsWith(".json"));
+    const cacheState = JSON.parse(await readFile(join(cache, cacheFile), "utf8"));
+    assert.ok(cacheState.lastReadBytes > 0);
+    assert.ok(cacheState.lastReadBytes < (await stat(path)).size);
+
+    await appendFile(path, ',"payload":{"type":"user_message","message":"Later"}}\n');
+    const thirdTranscript = await provider.parseTranscript(path, sessionId);
+    assert.equal(thirdTranscript.userMessageCount, 2);
+  } finally {
+    if (priorCacheRoot === undefined) {
+      delete process.env.AGENT_USAGE_STAT_CACHE_ROOT;
+    } else {
+      process.env.AGENT_USAGE_STAT_CACHE_ROOT = priorCacheRoot;
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test("Codex rollout usage is deduped, split by model, and long-context priced", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-usage-stat-test-"));
@@ -84,6 +175,7 @@ test("Codex rollout usage is deduped, split by model, and long-context priced", 
             last_token_usage: {
               input_tokens: 300000,
               cached_input_tokens: 200000,
+              cache_write_tokens: 80000,
               output_tokens: 1000,
               total_tokens: 301000,
             },
@@ -108,11 +200,12 @@ test("Codex rollout usage is deduped, split by model, and long-context priced", 
 
     assert.equal(detected.name, "codex");
     assert.equal(usage.sessionId, "11111111-1111-1111-1111-111111111111");
-    assert.equal(usage.inputTokens, 100600);
+    assert.equal(usage.inputTokens, 20600);
+    assert.equal(usage.cacheCreationTokens, 80000);
     assert.equal(usage.cacheReadTokens, 200400);
     assert.equal(usage.outputTokens, 1100);
     assert.equal(usage.totalTokens, 302100);
-    assert.equal(Number(usage.totalCost.toFixed(6)), 1.2481);
+    assert.equal(Number(usage.totalCost.toFixed(6)), 1.4481);
     assert.deepEqual(usage.modelsUsed, ["gpt-5.6-sol", "gpt-5.4"]);
     assert.deepEqual(provider.getUnknownModels(), []);
     assert.equal(transcript.sessionSlug, "build-usage-analytics");
@@ -121,6 +214,195 @@ test("Codex rollout usage is deduped, split by model, and long-context priced", 
     assert.equal(transcript.userMessageCount, 1);
     assert.equal(transcript.assistantMessageCount, 1);
 
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Codex prices the GPT-5.6 alias as Sol", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-usage-stat-test-"));
+  const path = join(dir, "rollout-alias.jsonl");
+  const usageEvent = {
+    input_tokens: 2000,
+    cached_input_tokens: 500,
+    cache_write_tokens: 1000,
+    output_tokens: 100,
+    total_tokens: 2100,
+  };
+
+  await writeFile(
+    path,
+    [
+      line("turn_context", { model: "gpt-5.6" }),
+      line("event_msg", {
+        type: "token_count",
+        info: {
+          total_token_usage: usageEvent,
+          last_token_usage: usageEvent,
+        },
+      }),
+    ].join("\n"),
+    "utf8",
+  );
+
+  try {
+    const provider = new CodexProvider();
+    const usage = await provider.calculateUsage(path, "fallback");
+
+    assert.equal(usage.inputTokens, 500);
+    assert.equal(usage.cacheCreationTokens, 1000);
+    assert.equal(usage.cacheReadTokens, 500);
+    assert.equal(usage.outputTokens, 100);
+    assert.equal(usage.totalTokens, 2100);
+    assert.equal(Number(usage.totalCost.toFixed(6)), 0.012);
+    assert.deepEqual(usage.modelsUsed, ["gpt-5.6-sol"]);
+    assert.equal(usage.modelBreakdowns[0].displayName, "GPT-5.6 Sol");
+    assert.deepEqual(provider.getUnknownModels(), []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Codex preserves the rollout identity when fork history repeats parent metadata", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-usage-stat-codex-fork-"));
+  const forkId = "77777777-7777-7777-7777-777777777777";
+  const parentId = "88888888-8888-8888-8888-888888888888";
+  const path = join(
+    dir,
+    `rollout-2026-07-18T00-00-00-${forkId}.jsonl`,
+  );
+  const usage = {
+    input_tokens: 1000,
+    cached_input_tokens: 400,
+    output_tokens: 100,
+    total_tokens: 1100,
+  };
+
+  await writeFile(
+    path,
+    [
+      line(
+        "session_meta",
+        { id: forkId, session_id: parentId, forked_from_id: parentId },
+        "2026-07-18T00:00:00.000Z",
+      ),
+      line(
+        "turn_context",
+        { turn_id: "turn-1", model: "gpt-5.6-sol" },
+        "2026-07-18T00:00:01.000Z",
+      ),
+      line(
+        "event_msg",
+        {
+          type: "token_count",
+          info: { total_token_usage: usage, last_token_usage: usage },
+        },
+        "2026-07-18T00:00:02.000Z",
+      ),
+      line(
+        "session_meta",
+        { id: parentId, session_id: parentId },
+        "2026-07-17T00:00:00.000Z",
+      ),
+    ].join("\n"),
+  );
+
+  try {
+    const provider = new CodexProvider();
+    const result = await provider.calculateUsage(path, forkId);
+    assert.equal(result.sessionId, forkId);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Codex preserves per-turn usage and timestamps across days", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-usage-stat-turns-"));
+  const path = join(dir, "rollout-turns.jsonl");
+  const firstUsage = {
+    input_tokens: 1000,
+    cached_input_tokens: 400,
+    output_tokens: 100,
+    total_tokens: 1100,
+  };
+  const secondUsage = {
+    input_tokens: 2000,
+    cached_input_tokens: 500,
+    output_tokens: 200,
+    total_tokens: 2200,
+  };
+
+  await writeFile(
+    path,
+    [
+      line(
+        "turn_context",
+        { turn_id: "turn-july-15", model: "gpt-5.6-sol" },
+        "2026-07-15T23:50:00.000Z",
+      ),
+      line(
+        "event_msg",
+        {
+          type: "token_count",
+          info: {
+            total_token_usage: firstUsage,
+            last_token_usage: firstUsage,
+          },
+        },
+        "2026-07-15T23:55:00.000Z",
+      ),
+      line(
+        "turn_context",
+        { turn_id: "turn-july-16", model: "gpt-5.6-sol" },
+        "2026-07-16T00:10:00.000Z",
+      ),
+      line(
+        "event_msg",
+        {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 3000,
+              cached_input_tokens: 900,
+              output_tokens: 300,
+              total_tokens: 3300,
+            },
+            last_token_usage: secondUsage,
+          },
+        },
+        "2026-07-16T00:15:00.000Z",
+      ),
+    ].join("\n"),
+    "utf8",
+  );
+
+  try {
+    const provider = new CodexProvider();
+    const usage = await provider.calculateUsage(path, "fallback");
+
+    assert.deepEqual(
+      usage.turns.map((turn) => ({
+        id: turn.id,
+        endTime: turn.endTime,
+        totalTokens: turn.totalTokens,
+      })),
+      [
+        {
+          id: "turn-july-15",
+          endTime: "2026-07-15T23:55:00.000Z",
+          totalTokens: 1100,
+        },
+        {
+          id: "turn-july-16",
+          endTime: "2026-07-16T00:15:00.000Z",
+          totalTokens: 2200,
+        },
+      ],
+    );
+    assert.equal(
+      Number(usage.turns.reduce((sum, turn) => sum + turn.totalCost, 0).toFixed(6)),
+      Number(usage.totalCost.toFixed(6)),
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -139,6 +421,7 @@ test("logbook never regresses when detached workers finish out of order", async 
       cacheReadTokens: 0,
       totalTokens: tokens,
       totalCost: cost,
+      sourceFingerprint: `snapshot-${tokens}`,
       modelsUsed: ["gpt-5.6-sol"],
       modelBreakdowns: [],
     },
@@ -159,8 +442,17 @@ test("logbook never regresses when detached workers finish out of order", async 
       root,
       makeData(1000, 1.5, "2026-07-13T00:10:00.000Z"),
     );
+    await writer.append(
+      root,
+      makeData(900, 0.9, "2026-07-13T00:09:00.000Z"),
+    );
+    const preserved = JSON.parse(await readFile(shard, "utf8"));
+    assert.equal(preserved.total_tokens, 1000);
+    assert.equal(preserved.total_cost_usd, 1.5);
+    assert.equal(preserved.source_fingerprint, "snapshot-900");
+
     await Promise.all(
-      [900, 800, 700, 600, 500].map((tokens) =>
+      [800, 700, 600, 500].map((tokens) =>
         writer.append(
           root,
           makeData(
@@ -174,6 +466,7 @@ test("logbook never regresses when detached workers finish out of order", async 
     const record = JSON.parse(await readFile(shard, "utf8"));
     assert.equal(record.total_tokens, 1000);
     assert.equal(record.total_cost_usd, 1.5);
+    assert.notEqual(record.source_fingerprint, "snapshot-1000");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -230,14 +523,18 @@ test("detached Codex hook performs a quiet usage update", async () => {
     "utf8",
   );
 
+  const run = await createAgentRun("codex", {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+  });
+
   try {
     const result = await new Promise((resolve, reject) => {
       const child = spawn(process.execPath, [
         join(process.cwd(), "bin", "agent-usage-stat.js"),
         "capture",
         "--detach",
-        "--provider",
-        "codex",
         "--quiet",
       ], {
         cwd: process.cwd(),
@@ -246,6 +543,7 @@ test("detached Codex hook performs a quiet usage update", async () => {
           HOME: home,
           USERPROFILE: home,
           CODEX_HOME: codexHome,
+          AGENT_USAGE_STAT_RUN_ID: run.manifest.run_id,
         },
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -286,7 +584,21 @@ test("detached Codex hook performs a quiet usage update", async () => {
     assert.equal(shard.provider, "codex");
     assert.equal(shard.total_tokens, 1100);
     assert.equal(shard.total_cost_usd, 0.002875);
+    assert.equal(shard.turns.length, 1);
+    assert.equal(shard.turns[0].turn_id, "turn-1");
+    assert.equal(shard.turns[0].total_tokens, 1100);
+
+    const settled = await waitForAgentRun(run, {
+      pollMs: 10,
+      quietMs: 20,
+      timeoutMs: 1000,
+    });
+    assert.equal(settled.timedOut, false);
+    assert.equal(settled.results.length, 1);
+    assert.equal(settled.results[0].status, "recorded");
+    assert.equal(settled.results[0].shard_path, shardPath);
   } finally {
+    await removeAgentRun(run);
     await rm(home, { recursive: true, force: true });
   }
 });

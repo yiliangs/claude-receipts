@@ -83,13 +83,30 @@ const STATUS = { good: '#86b07a', warn: '#dd6a3d', bad: '#c8524a', lime: '#D2FE0
 const DAY = 86400000
 
 // A loaded session carries normalized numeric times + derived fields.
-export interface LSession extends Omit<RawSession, 'start' | 'end'> {
+export interface LSession extends Omit<RawSession, 'start' | 'end' | 'turns'> {
   start: number
   end: number | null
   t: number // billing time = end (fallback start); ALL window/bucket math uses this
   primaryModel: string
   fam: string // primary model family key
   _i: number
+  turns: LTurn[]
+}
+
+export interface LTurn {
+  id: string
+  start: number
+  end: number
+  t: number
+  input: number
+  output: number
+  cacheCreate: number
+  cacheRead: number
+  totalTokens: number
+  cost: number
+  models: string[]
+  primaryModel: string
+  fam: string
 }
 
 // ---- formatting ----
@@ -195,6 +212,19 @@ export async function loadData(): Promise<void> {
     const primaryModel = s.models[0] || ''
     const startMs = Date.parse(s.start)
     const endMs = s.end ? Date.parse(s.end) : null
+    const turns: LTurn[] = (s.turns || []).map((turn) => {
+      const turnStart = Date.parse(turn.start)
+      const turnEnd = Date.parse(turn.end)
+      const turnPrimaryModel = turn.models[0] || primaryModel
+      return {
+        ...turn,
+        start: turnStart,
+        end: turnEnd,
+        t: turnEnd,
+        primaryModel: turnPrimaryModel,
+        fam: familyOf(turnPrimaryModel),
+      }
+    })
     return {
       ...s,
       start: startMs,
@@ -202,6 +232,7 @@ export async function loadData(): Promise<void> {
       t: endMs ?? startMs, // spend lands on when the session ENDED
       primaryModel,
       fam: familyOf(primaryModel),
+      turns,
       _i: i,
     }
   })
@@ -213,9 +244,12 @@ export async function loadData(): Promise<void> {
     if (s.start > maxStart) maxStart = s.start
   }
   const meta = metaRaw as Meta | null
-  const buildMs = meta && meta.generatedAt ? Date.parse(meta.generatedAt) : maxStart
-  const BUILD = new Date(Math.max(buildMs, maxStart))
-  const SPAN = Math.max(1, Math.ceil((BUILD.getTime() - minStart) / DAY) + 1)
+  const generatedAt = meta?.generatedAt ? Date.parse(meta.generatedAt) : Number.NaN
+  const buildMs = Number.isFinite(generatedAt) ? generatedAt : Date.now()
+  const latestSession = Number.isFinite(maxStart) ? maxStart : buildMs
+  const earliestSession = Number.isFinite(minStart) ? minStart : latestSession
+  const BUILD = new Date(Math.max(buildMs, latestSession))
+  const SPAN = Math.max(1, Math.ceil((BUILD.getTime() - earliestSession) / DAY) + 1)
   const startOfWindow = new Date(BUILD.getTime() - SPAN * DAY)
 
   const PROJECTS = Array.from(new Set(sessions.map((s) => s.project))).filter(Boolean).sort((a, b) => a.localeCompare(b))

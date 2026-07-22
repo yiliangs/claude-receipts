@@ -31,9 +31,11 @@ Everything upstream of `SessionUsage` and `ParsedTranscript` is provider-specifi
 ## Key modules
 
 - `src/commands/capture.ts`: session ingestion
+- `src/commands/run.ts`: current-terminal agent wrapper and completion status
 - `src/commands/portal.ts`: local portal server
-- `src/commands/setup.ts`: host hook installation
+- `src/commands/setup.ts`: host hook and shell-wrapper installation
 - `src/core/logbook-writer.ts`: idempotent per-session shard writer
+- `src/utils/capture-run.ts`: machine-local run and capture-result protocol
 - `src/utils/usage-root.ts`: the only data-root resolver
 - `portal/scripts/build-data.mjs`: browser artifact builder
 - `portal/src/`: analytics interface
@@ -41,12 +43,15 @@ Everything upstream of `SessionUsage` and `ParsedTranscript` is provider-specifi
 ## Invariants
 
 - `logbook.d/` is the only spend source. Never revive or merge a shared CSV.
+- `provider` is the host tool; model vendor is a separate axis. Claude Code can route to GPT, so never pick a pricing table or a chart series by provider alone. Derive vendor per model via `src/core/model-vendor.ts`.
+- Persist `model_breakdowns` on every shard. Session totals alone cannot be split by vendor after the fact.
 - Never let a recomputation replace a recorded session with lower tokens or cost.
 - Parse JSONL line by line with per-line error isolation.
 - Normalize model bracket suffixes before pricing lookup.
 - Claude subagent usage includes recursively nested workflow transcripts.
 - `cli.ts`, `detach-shim.ts`, and `hook-log.ts` must remain import-light.
 - The detach shim reads at most the first 128 KB when checking Claude entrypoints.
+- Terminal feedback must fall back silently rather than weaken detached capture.
 - Keep `bin/run-hook.sh` and `portal/Agent-Usage-Stat.command` executable in Git.
 - Resolve machine-specific paths through `usage-root.ts`; do not hardcode them.
 - Before changing hook behavior, read `SESSIONEND-HOOK-LOG.md`.

@@ -10,22 +10,23 @@ import { Tokens } from './tokens'
 import { Projects } from './projects'
 import { Sessions } from './sessions'
 import { Drawer } from './drill'
+import type { Filters, RangeKey, ViewKey } from './types'
 
-const NAV = [
+const NAV: Array<{ key: ViewKey; label: string; icon: typeof LHI.Pulse }> = [
   { key: 'overview', label: 'Overview', icon: LHI.Pulse },
   { key: 'spend', label: 'Spend', icon: LHI.Coin },
   { key: 'tokens', label: 'Tokens', icon: LHI.Bolt },
   { key: 'projects', label: 'Projects', icon: LHI.Folder },
   { key: 'sessions', label: 'Sessions', icon: LHI.Table },
 ]
-const RANGES: [string, string][] = [
+const RANGES: [RangeKey, string][] = [
   ['7d', '7D'],
   ['14d', '14D'],
   ['30d', '30D'],
   ['90d', '90D'],
   ['all', 'ALL'],
 ]
-const HEADS: Record<string, [string, string]> = {
+const HEADS: Record<ViewKey, [string, string]> = {
   overview: ['Spend Overview', 'What is the API-equivalent cost, and where is it going?'],
   spend: ['Spend', 'Where the money goes — by project, model, machine, and session.'],
   tokens: ['Tokens', 'Token composition and how much work the cache is saving.'],
@@ -34,7 +35,7 @@ const HEADS: Record<string, [string, string]> = {
 }
 
 // prev-period filter (same dims, previous window) for KPI deltas
-function applyPrev(f: any) {
+function applyPrev(f: Filters) {
   const win = LHA.windowFor(f.range)
   const q = (f.search || '').trim().toLowerCase()
   const useR = f.providers?.size || 0, useP = f.projects.size, useM = f.machines.size, useF = f.models.size
@@ -42,6 +43,7 @@ function applyPrev(f: any) {
   for (const s of LH.SESSIONS) {
     if (s.t < win.prevStart || s.t >= win.prevEnd) continue
     if (useR && !f.providers.has(s.provider)) continue
+    if (f.vendors?.size && !Object.keys(s.byVendor || {}).some((v) => f.vendors.has(v))) continue
     if (useP && !f.projects.has(s.project)) continue
     if (useM && !f.machines.has(s.machine)) continue
     if (useF && !s.models.some((m: string) => f.models.has(LHA.famOf(m)))) continue
@@ -58,10 +60,11 @@ function applyPrev(f: any) {
 export function App() {
   const [ready, setReady] = useState(false)
   const [loadErr, setLoadErr] = useState<string | null>(null)
-  const [view, setView] = useState('overview')
-  const [filters, setFilters] = useState({
+  const [view, setView] = useState<ViewKey>('overview')
+  const [filters, setFilters] = useState<Filters>({
     range: '30d',
     providers: new Set<string>(),
+    vendors: new Set<string>(),
     projects: new Set<string>(),
     machines: new Set<string>(),
     models: new Set<string>(),
@@ -104,14 +107,14 @@ export function App() {
     }
   }, [ready])
 
-  const set = (patch: any) => setFilters((f) => ({ ...f, ...patch }))
-  const toggleFilter = (dim: string, value: string) =>
-    setFilters((f: any) => {
+  const set = (patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch }))
+  const toggleFilter = (dim: 'providers' | 'projects' | 'machines' | 'models', value: string) =>
+    setFilters((f) => {
       const next = new Set(f[dim])
       next.has(value) ? next.delete(value) : next.add(value)
       return { ...f, [dim]: next }
     })
-  const clearAll = () => set({ providers: new Set(), projects: new Set(), machines: new Set(), models: new Set(), search: '' })
+  const clearAll = () => set({ providers: new Set(), vendors: new Set(), projects: new Set(), machines: new Set(), models: new Set(), search: '' })
 
   const win = useMemo(() => LHA.windowFor(filters.range), [filters.range, ready])
   const bks = useMemo(() => LHA.buckets(win), [win])
@@ -125,7 +128,7 @@ export function App() {
     setView('sessions')
     setDrill(null)
   }
-  const goView = (v: string) => { setView(v); setDrill(null) }
+  const goView = (v: ViewKey) => { setView(v); setDrill(null) }
 
   // keyboard: / focuses search, esc closes
   useEffect(() => {
@@ -163,6 +166,15 @@ export function App() {
         <div className="zero">loading ledger…</div>
       </div>
     )
+  if (LH.SESSIONS.length === 0)
+    return (
+      <div className="app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="zero" style={{ textAlign: 'center' }}>
+          <div className="big">Ready for your first session</div>
+          Use Claude Code or Codex, then open Agent Usage Stat again.
+        </div>
+      </div>
+    )
 
   const fmt = LH.fmt
   const allCost = LH.SESSIONS.reduce((a, s) => a + s.cost, 0)
@@ -171,7 +183,7 @@ export function App() {
   filters.models.forEach((k) => activeChips.push({ dim: 'models', value: k, label: LH.FAM_BY[k]?.label || k, sw: LH.FAM_BY[k]?.color, ck: 'Model' }))
   filters.projects.forEach((p) => activeChips.push({ dim: 'projects', value: p, label: p, ck: 'Project' }))
   filters.machines.forEach((m) => activeChips.push({ dim: 'machines', value: m, label: m, ck: 'Machine' }))
-  const hasFilters = filters.providers.size > 0 || activeChips.length > 0 || filters.search
+  const hasFilters = filters.providers.size > 0 || filters.vendors.size > 0 || activeChips.length > 0 || filters.search
 
   const viewEl = (() => {
     switch (view) {
@@ -276,8 +288,25 @@ export function App() {
             ))}
           </div>
           <span className="fb-sep" />
+          <span className="fb-lab">Vendor</span>
+          <div className="daterange">
+            {[
+              ['', 'ALL'],
+              ['anthropic', 'ANTHROPIC'],
+              ['openai', 'OPENAI'],
+            ].map(([key, label]) => (
+              <button
+                key={label}
+                className={(key === '' ? filters.vendors.size === 0 : filters.vendors.has(key)) ? 'on' : ''}
+                onClick={() => set({ vendors: key ? new Set([key]) : new Set() })}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="fb-sep" />
           <span className="fb-lab">Filters</span>
-          {filters.providers.size === 0 && activeChips.length === 0 && !filters.search && (
+          {filters.providers.size === 0 && filters.vendors.size === 0 && activeChips.length === 0 && !filters.search && (
             <span className="chip empty"><span className="ck">none · click any chart element</span></span>
           )}
           {filters.search && (
