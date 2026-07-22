@@ -1,15 +1,25 @@
 import { createHash } from "crypto";
 import { open } from "fs/promises";
+import { pricingFingerprintSource } from "./pricing.js";
 
 const TAIL_BYTES = 64 * 1024;
-// Bump when Codex parsing or pricing changes require existing shards to be
-// recomputed even though their rollout bytes did not change.
-const SNAPSHOT_VERSION = "codex-usage-v1";
+// Bump only for usage-parser semantic changes. Pricing-table changes are
+// included automatically through pricingFingerprintSource().
+const USAGE_ALGORITHM_VERSION = "codex-usage-v3";
+const SNAPSHOT_VERSION = createHash("sha256")
+  .update(USAGE_ALGORITHM_VERSION)
+  .update(pricingFingerprintSource())
+  .digest("hex")
+  .slice(0, 16);
+
+export function codexSnapshotVersion(): string {
+  return `${USAGE_ALGORITHM_VERSION}:${SNAPSHOT_VERSION}`;
+}
 
 /** Fingerprint append-only rollout content without hashing the full history. */
 export function fingerprintTranscriptContent(content: string): string {
   const bytes = Buffer.from(content, "utf-8");
-  return fingerprint(
+  return fingerprintTranscriptTail(
     bytes.length,
     bytes.subarray(Math.max(0, bytes.length - TAIL_BYTES)),
   );
@@ -28,13 +38,13 @@ export async function fingerprintTranscriptFile(path: string): Promise<string> {
       length,
       Math.max(0, info.size - length),
     );
-    return fingerprint(info.size, tail.subarray(0, bytesRead));
+    return fingerprintTranscriptTail(info.size, tail.subarray(0, bytesRead));
   } finally {
     await handle.close();
   }
 }
 
-function fingerprint(size: number, tail: Buffer): string {
+export function fingerprintTranscriptTail(size: number, tail: Buffer): string {
   const hash = createHash("sha256").update(tail).digest("hex");
-  return `${SNAPSHOT_VERSION}:${size}:${hash}`;
+  return `${codexSnapshotVersion()}:${size}:${hash}`;
 }

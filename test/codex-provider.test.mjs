@@ -1,6 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
@@ -15,6 +24,83 @@ import {
 function line(type, payload, timestamp) {
   return JSON.stringify({ type, payload, timestamp });
 }
+
+test("Codex snapshot cache processes appended complete lines and defers partial tails", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-usage-stat-incremental-"));
+  const cache = join(dir, "cache");
+  const sessionId = "99999999-9999-9999-9999-999999999999";
+  const path = join(dir, `rollout-${sessionId}.jsonl`);
+  const firstUsage = {
+    input_tokens: 1000,
+    cached_input_tokens: 400,
+    output_tokens: 100,
+    total_tokens: 1100,
+  };
+  const secondUsage = {
+    input_tokens: 3000,
+    cached_input_tokens: 800,
+    output_tokens: 300,
+    total_tokens: 3300,
+  };
+  const priorCacheRoot = process.env.AGENT_USAGE_STAT_CACHE_ROOT;
+  process.env.AGENT_USAGE_STAT_CACHE_ROOT = cache;
+
+  await writeFile(
+    path,
+    [
+      line("session_meta", { id: sessionId, cwd: "C:\\work\\demo" }),
+      line("turn_context", { turn_id: "one", model: "gpt-5.6-sol" }),
+      line("event_msg", { type: "user_message", message: "First prompt" }),
+      line("event_msg", {
+        type: "token_count",
+        info: { total_token_usage: firstUsage, last_token_usage: firstUsage },
+      }),
+    ].join("\n") + "\n",
+  );
+
+  try {
+    const provider = new CodexProvider();
+    const first = await provider.calculateUsage(path, sessionId);
+    assert.equal(first.totalTokens, 1100);
+    assert.equal((await readdir(cache)).filter((x) => x.endsWith(".json")).length, 1);
+
+    const completeSecondTurn = [
+      line("turn_context", { turn_id: "two", model: "gpt-5.6-sol" }),
+      line("event_msg", { type: "agent_message", message: "Second response" }),
+      line("event_msg", {
+        type: "token_count",
+        info: { total_token_usage: secondUsage, last_token_usage: {
+          input_tokens: 2000,
+          cached_input_tokens: 400,
+          output_tokens: 200,
+          total_tokens: 2200,
+        } },
+      }),
+    ].join("\n") + "\n";
+    await appendFile(path, completeSecondTurn + '{"type":"event_msg"');
+
+    const second = await provider.calculateUsage(path, sessionId);
+    const transcript = await provider.parseTranscript(path, sessionId);
+    assert.equal(second.totalTokens, 3300);
+    assert.equal(second.turns.length, 2);
+    assert.equal(transcript.assistantMessageCount, 1);
+    const [cacheFile] = (await readdir(cache)).filter((x) => x.endsWith(".json"));
+    const cacheState = JSON.parse(await readFile(join(cache, cacheFile), "utf8"));
+    assert.ok(cacheState.lastReadBytes > 0);
+    assert.ok(cacheState.lastReadBytes < (await stat(path)).size);
+
+    await appendFile(path, ',"payload":{"type":"user_message","message":"Later"}}\n');
+    const thirdTranscript = await provider.parseTranscript(path, sessionId);
+    assert.equal(thirdTranscript.userMessageCount, 2);
+  } finally {
+    if (priorCacheRoot === undefined) {
+      delete process.env.AGENT_USAGE_STAT_CACHE_ROOT;
+    } else {
+      process.env.AGENT_USAGE_STAT_CACHE_ROOT = priorCacheRoot;
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test("Codex rollout usage is deduped, split by model, and long-context priced", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-usage-stat-test-"));
@@ -172,6 +258,59 @@ test("Codex prices the GPT-5.6 alias as Sol", async () => {
     assert.deepEqual(usage.modelsUsed, ["gpt-5.6-sol"]);
     assert.equal(usage.modelBreakdowns[0].displayName, "GPT-5.6 Sol");
     assert.deepEqual(provider.getUnknownModels(), []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Codex preserves the rollout identity when fork history repeats parent metadata", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-usage-stat-codex-fork-"));
+  const forkId = "77777777-7777-7777-7777-777777777777";
+  const parentId = "88888888-8888-8888-8888-888888888888";
+  const path = join(
+    dir,
+    `rollout-2026-07-18T00-00-00-${forkId}.jsonl`,
+  );
+  const usage = {
+    input_tokens: 1000,
+    cached_input_tokens: 400,
+    output_tokens: 100,
+    total_tokens: 1100,
+  };
+
+  await writeFile(
+    path,
+    [
+      line(
+        "session_meta",
+        { id: forkId, session_id: parentId, forked_from_id: parentId },
+        "2026-07-18T00:00:00.000Z",
+      ),
+      line(
+        "turn_context",
+        { turn_id: "turn-1", model: "gpt-5.6-sol" },
+        "2026-07-18T00:00:01.000Z",
+      ),
+      line(
+        "event_msg",
+        {
+          type: "token_count",
+          info: { total_token_usage: usage, last_token_usage: usage },
+        },
+        "2026-07-18T00:00:02.000Z",
+      ),
+      line(
+        "session_meta",
+        { id: parentId, session_id: parentId },
+        "2026-07-17T00:00:00.000Z",
+      ),
+    ].join("\n"),
+  );
+
+  try {
+    const provider = new CodexProvider();
+    const result = await provider.calculateUsage(path, forkId);
+    assert.equal(result.sessionId, forkId);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

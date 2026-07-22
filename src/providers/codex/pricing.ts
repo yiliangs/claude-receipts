@@ -98,6 +98,15 @@ const FEATURE_LABEL_MODELS: Record<string, string> = {
   "codex-auto-review": "gpt-5.5",
 };
 
+/** Stable input for transcript fingerprints; changes automatically with rates. */
+export function pricingFingerprintSource(): string {
+  return JSON.stringify({
+    longContextThreshold: LONG_CONTEXT_THRESHOLD,
+    pricing: PRICING,
+    featureLabels: FEATURE_LABEL_MODELS,
+  });
+}
+
 export function normalizeModelId(model: string): string {
   const normalized = model.replace(/-\d{4}-\d{2}-\d{2}$/, "");
   if (FEATURE_LABEL_MODELS[normalized]) return FEATURE_LABEL_MODELS[normalized];

@@ -36,8 +36,16 @@ Manual checks validate startup and wiring. Only a real Claude Code `/exit` valid
 6. Use valid JSON paths in synthetic hook tests. Raw Windows backslashes are invalid JSON escapes.
 7. Validate changes with a real `/exit`, not only `/clear`.
 8. Keep `bin/run-hook.sh` executable in Git.
+9. Codex transcript parsing and usage pricing share one incremental snapshot. Do not reintroduce independent full-file scans.
+10. Persistent Codex caches are derived acceleration only. The rollout and immutable logbook shard remain the sources of truth.
 
 The `AGENT_USAGE_STAT_ALL_SESSIONS=1` environment variable disables the Claude automation gate when SDK session capture is intentional.
+
+## Incremental Codex snapshots
+
+Codex rollout files can exceed 100 MB during long sessions. The provider keeps a versioned per-rollout snapshot under `~/.agent-usage-stat/cache/codex/` with the processed byte cursor, a rolling tail fingerprint, usage totals, model splits, turn data, and transcript metadata. A normal Stop capture reads only complete bytes appended since the prior capture; an incomplete final JSONL line is deferred until a later capture completes it.
+
+Parser or pricing-version changes, truncation, replacement, and fingerprint mismatch invalidate the snapshot and trigger one full rebuild. Cache loss affects performance only, not recorded usage correctness.
 
 ## Same-terminal completion status
 
