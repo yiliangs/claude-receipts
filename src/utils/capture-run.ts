@@ -43,6 +43,7 @@ export interface RecordedCaptureResult extends CaptureResultBase {
   status: "recorded";
   project: string;
   total_tokens: number;
+  total_cost_usd: number;
   shard_path: string;
 }
 
@@ -328,6 +329,9 @@ function isCaptureResult(
       return (
         typeof result.project === "string" &&
         typeof result.total_tokens === "number" &&
+        typeof result.total_cost_usd === "number" &&
+        Number.isFinite(result.total_cost_usd) &&
+        result.total_cost_usd >= 0 &&
         typeof result.shard_path === "string"
       );
     case "no_usage":

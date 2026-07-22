@@ -30,7 +30,7 @@ Open a new terminal after setup. The normal `claude`, `codex`, and `claudex`
 commands then print one verified status line after the agent exits:
 
 ```text
-[Agent Usage Stat] Usage recorded: Claude, 18.6M tokens, my-project
+[Agent Usage Stat] Usage recorded: Claude, 18.6M tokens, $42.68, my-project
 ```
 
 The line appears in the same terminal, not in a popup. It is printed only after

@@ -119,7 +119,7 @@ export function formatRunMessage(run: SettledRun): string | null {
       ? latest.provider[0].toUpperCase() + latest.provider.slice(1)
       : "Agent";
     const project = latest.project ? `, ${latest.project}` : "";
-    return `[Agent Usage Stat] Usage recorded: ${provider}, ${formatTokens(latest.total_tokens)} tokens${project}`;
+    return `[Agent Usage Stat] Usage recorded: ${provider}, ${formatTokens(latest.total_tokens)} tokens, ${formatUsd(latest.total_cost_usd)}${project}`;
   }
 
   if (failed.length > 0) {
@@ -138,6 +138,13 @@ function formatTokens(tokens: number): string {
   if (tokens >= 1_000_000) return `${trimDecimal(tokens / 1_000_000)}M`;
   if (tokens >= 1_000) return `${trimDecimal(tokens / 1_000)}K`;
   return Math.max(0, Math.round(tokens)).toLocaleString("en-US");
+}
+
+function formatUsd(cost: number): string {
+  return `$${cost.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 function trimDecimal(value: number): string {

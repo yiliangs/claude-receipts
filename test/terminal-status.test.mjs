@@ -51,6 +51,7 @@ test("capture runs correlate pending input with an atomic terminal result", asyn
         status: "recorded",
         project: "terminal-test",
         total_tokens: 1_234_567,
+        total_cost_usd: 1.25,
         shard_path: join(home, "usage", "logbook.d", "session.json"),
       },
       { provider: "claude", sessionId: "session-1" },
@@ -63,6 +64,7 @@ test("capture runs correlate pending input with an atomic terminal result", asyn
     assert.deepEqual(snapshot.unresolvedCaptureIds, []);
     assert.equal(snapshot.results[0].status, "recorded");
     assert.equal(snapshot.results[0].total_tokens, 1_234_567);
+    assert.equal(snapshot.results[0].total_cost_usd, 1.25);
   } finally {
     await removeAgentRun(run);
     await rm(home, { recursive: true, force: true });
@@ -124,6 +126,7 @@ test("terminal message aggregation never overclaims incomplete work", () => {
     provider: "claude",
     project: "natalie",
     total_tokens: 18_562_108,
+    total_cost_usd: 42.678,
     shard_path: "usage.json",
   };
   const base = {
@@ -136,7 +139,7 @@ test("terminal message aggregation never overclaims incomplete work", () => {
 
   assert.equal(
     formatRunMessage(base),
-    "[Agent Usage Stat] Usage recorded: Claude, 18.6M tokens, natalie",
+    "[Agent Usage Stat] Usage recorded: Claude, 18.6M tokens, $42.68, natalie",
   );
   assert.match(
     formatRunMessage({ ...base, timedOut: true }),
@@ -271,6 +274,7 @@ const result = {
   provider: "claude",
   project: "fake-project",
   total_tokens: 1234567,
+  total_cost_usd: 1.2532,
   shard_path: "fake-shard.json"
 };
 const temp = join(run, "results", captureId + ".tmp");
@@ -305,7 +309,7 @@ process.exit(7);
       assert.equal(JSON.parse(result.stdout).correlated, true);
       assert.match(
         result.stderr,
-        /Usage recorded: Claude, 1\.2M tokens, fake-project/,
+        /Usage recorded: Claude, 1\.2M tokens, \$1\.25, fake-project/,
       );
     }
   } finally {

@@ -119,6 +119,7 @@ export class CaptureCommand {
         status: "recorded",
         project: transcriptData.projectName || "",
         total_tokens: sessionData.totalTokens,
+        total_cost_usd: Number(sessionData.totalCost.toFixed(6)),
         shard_path: shardPath,
       };
       logHookEvent(
