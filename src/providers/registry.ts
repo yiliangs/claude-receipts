@@ -7,6 +7,28 @@ import type {
   SessionProvider,
 } from "../types/provider.js";
 
+interface ProviderRegistration {
+  name: ProviderName;
+  create: () => SessionProvider;
+  transcriptRecordTypes: readonly string[];
+  homePathSegment: string;
+}
+
+const PROVIDERS: readonly ProviderRegistration[] = [
+  {
+    name: "claude",
+    create: () => new ClaudeProvider(),
+    transcriptRecordTypes: ["user", "assistant"],
+    homePathSegment: "/.claude/",
+  },
+  {
+    name: "codex",
+    create: () => new CodexProvider(),
+    transcriptRecordTypes: ["session_meta", "turn_context"],
+    homePathSegment: "/.codex/",
+  },
+];
+
 export interface ResolvedSession {
   provider: SessionProvider;
   found: FoundSession;
@@ -14,14 +36,16 @@ export interface ResolvedSession {
 
 /** Create a provider explicitly for programmatic library use. */
 export function providerByName(name: ProviderName): SessionProvider {
-  if (name === "claude") return new ClaudeProvider();
-  if (name === "codex") return new CodexProvider();
-  throw new Error(`Unsupported provider: ${String(name)}`);
+  const registration = PROVIDERS.find((provider) => provider.name === name);
+  if (!registration) {
+    throw new Error(`Unsupported provider: ${String(name)}`);
+  }
+  return registration.create();
 }
 
 /** Every installed provider implementation, used by provider-neutral workflows. */
 export function allProviders(): SessionProvider[] {
-  return [new ClaudeProvider(), new CodexProvider()];
+  return PROVIDERS.map((provider) => provider.create());
 }
 
 /** Detect a transcript by wire format, with path only as a final fallback. */
@@ -45,21 +69,23 @@ export async function detectProvider(
   for (const line of head.split("\n")) {
     if (!line.trim()) continue;
     try {
-      const record = JSON.parse(line) as { type?: string; payload?: unknown };
-      if (record.type === "session_meta" || record.type === "turn_context") {
-        return new CodexProvider();
-      }
-      if (record.type === "user" || record.type === "assistant") {
-        return new ClaudeProvider();
-      }
+      const record = JSON.parse(line) as { type?: string };
+      const registration = PROVIDERS.find((provider) =>
+        record.type
+          ? provider.transcriptRecordTypes.includes(record.type)
+          : false,
+      );
+      if (registration) return registration.create();
     } catch {
       // Keep scanning; a partial final line can appear in the head chunk.
     }
   }
 
   const normalized = transcriptPath.replace(/\\/g, "/").toLowerCase();
-  if (normalized.includes("/.codex/")) return new CodexProvider();
-  if (normalized.includes("/.claude/")) return new ClaudeProvider();
+  const registration = PROVIDERS.find((provider) =>
+    normalized.includes(provider.homePathSegment),
+  );
+  if (registration) return registration.create();
   throw new Error(`Could not detect transcript provider: ${transcriptPath}`);
 }
 
@@ -67,9 +93,8 @@ export async function detectProvider(
 export async function findSession(
   query?: string,
 ): Promise<ResolvedSession> {
-  const providers = allProviders();
   const results = await Promise.all(
-    providers.map(async (provider) => {
+    allProviders().map(async (provider) => {
       try {
         return { provider, found: await provider.findSession(query) };
       } catch {
