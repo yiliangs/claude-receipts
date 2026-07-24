@@ -32,7 +32,7 @@
     "screenshot.png"
   ],
   "scripts": {
-    "build": "node scripts/clean-dist.mjs && tsc && npm run build:portal",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && npm run build:portal",
     "build:portal": "npm --prefix portal run build",
     "dev": "tsc --watch",
     "prepublishOnly": "npm run build",
