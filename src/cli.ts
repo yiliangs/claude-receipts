@@ -10,7 +10,7 @@ program.enablePositionalOptions();
 program
   .name("agent-usage-stat")
   .description("Explore Claude Code and Codex usage in a local portal")
-  .version("2.0.1");
+  .version("2.1.0");
 
 program
   .command("capture")
